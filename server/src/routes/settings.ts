@@ -9,6 +9,7 @@ import { libraryAlbumCount, libraryLastSync } from "../db/queries/library.js";
 import { artistImageStats, requeueAllMissingArtistImages, reseedArtistImages } from "../db/queries/artistImages.js";
 import { artistLinksStats, requeueAllMissingArtistLinks, reseedArtistLinks } from "../db/queries/artistLinks.js";
 import { coverartStats, requeueAllMissingCoverart, reseedCoverart } from "../db/queries/coverart.js";
+import { fetchViaFlareSolverr, flaresolverrConfigured } from "../integrations/flaresolverr.js";
 import { getImportStatus, importLastFmHistory, importListenBrainzHistory } from "../jobs/importHistory.js";
 import { db } from "../db/client.js";
 import { getAdminId } from "../db/queries/users.js";
@@ -162,13 +163,19 @@ settingsRouter.post("/media-cache/requeue", (req, res) => {
 
 // === Scraper debug =======================================================
 //
-// Fetches a scraper source URL with browser-like headers and returns the
-// raw response so the operator can see what HTML actually came back when
-// a parser produced 0 rows. Bypasses FlareSolverr — useful for figuring
-// out which sources need the proxy vs which just need a parser fix.
+// Fetches a scraper source URL and returns the raw response so the operator
+// can see what HTML came back when a parser produced 0 rows.
+//
+// Defaults to a raw fetch (browser headers, no proxy) — that's the right
+// mode for distinguishing "this needs FlareSolverr" (Cloudflare challenge
+// in the response) vs "the parser is wrong" (real HTML, 0 matches).
+//
+// For Cloudflare-protected sources (RYM, sometimes AOTY) pass
+// ?via=flaresolverr to route through the configured FlareSolverr proxy
+// and see the post-challenge HTML.
 //
 // curl -H "Authorization: Bearer <token>" \
-//   'http://shirabe:3000/api/settings/scraper-debug?source=aoty'
+//   'http://shirabe:3000/api/settings/scraper-debug?source=rym&via=flaresolverr'
 
 settingsRouter.get("/scraper-debug", async (req, res) => {
   const source = String(req.query.source ?? "");
@@ -194,6 +201,40 @@ settingsRouter.get("/scraper-debug", async (req, res) => {
     });
     return;
   }
+  const via = String(req.query.via ?? "direct");
+
+  // FlareSolverr-routed fetch — for Cloudflare-blocked sources. Returns
+  // the post-challenge HTML so we can inspect the real markup.
+  if (via === "flaresolverr") {
+    if (!flaresolverrConfigured()) {
+      res.status(400).json({
+        error: "flaresolverr_not_configured",
+        hint: "Set flaresolverr_url in Settings → Cloudflare bypass first.",
+      });
+      return;
+    }
+    const html = await fetchViaFlareSolverr(url, `debug/${source}`);
+    if (!html) {
+      res.status(502).json({
+        source,
+        url,
+        via: "flaresolverr",
+        error: "flaresolverr_returned_nothing",
+        hint: "Check the FlareSolverr container logs — usually means it couldn't solve the challenge.",
+      });
+      return;
+    }
+    res.json({
+      source,
+      url,
+      via: "flaresolverr",
+      content_length: html.length,
+      preview: html.slice(0, limit),
+    });
+    return;
+  }
+
+  // Default: raw fetch with browser headers.
   const browserHeaders: Record<string, string> = {
     "User-Agent":
       "Mozilla/5.0 (X11; Linux x86_64; rv:128.0) Gecko/20100101 Firefox/128.0",
@@ -207,6 +248,7 @@ settingsRouter.get("/scraper-debug", async (req, res) => {
     res.json({
       source,
       url,
+      via: "direct",
       status: r.status,
       content_type: r.headers.get("content-type"),
       content_length: text.length,
@@ -216,6 +258,7 @@ settingsRouter.get("/scraper-debug", async (req, res) => {
     res.status(502).json({
       source,
       url,
+      via: "direct",
       error: err instanceof Error ? err.message : "unknown",
     });
   }
