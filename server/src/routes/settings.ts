@@ -186,7 +186,7 @@ settingsRouter.get("/scraper-debug", async (req, res) => {
   const year = new Date().getUTCFullYear();
   const targets: Record<string, string> = {
     aoty: `https://www.albumoftheyear.org/must-hear/${year}/`,
-    rym: `https://rateyourmusic.com/charts/top/album/year/${year}/`,
+    rym: `https://rateyourmusic.com/new-music/`,
     rym_charts: "https://rateyourmusic.com/charts/",
     rym_new_music: "https://rateyourmusic.com/new-music/",
     stereogum_aotw: "https://www.stereogum.com/category/album-of-the-week/feed/",

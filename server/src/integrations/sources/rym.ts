@@ -6,44 +6,46 @@ import { htmlPreview } from "./rssHelpers.js";
 // RateYourMusic scraper
 // ============================================================================
 //
-// RYM (Sonemic) has no public API and their ToS prohibits automated access.
-// The user explicitly chose to scrape anyway, accepting the tradeoffs:
+// RYM has no public API and their ToS prohibits scraping. Implemented per
+// the user's explicit decision to scrape anyway; tradeoffs documented in
+// the README.
 //
-//   - RYM sits behind Cloudflare. Most server-side fetches hit a JS challenge
-//     page and get 0 results. There's nothing to do about this short of a
-//     headless-browser setup (puppeteer/playwright), which is too heavy for
-//     this project.
-//   - Even when the fetch succeeds, RYM's HTML structure changes
-//     occasionally. The parser uses defensive regex with multiple fall-back
-//     patterns; when none match we log and return [] instead of throwing.
-//   - We cache the response for 24 hours in-memory so multiple
-//     pullSuggestions runs in a day don't hammer the site.
-//   - User-Agent + Accept headers mimic a real browser. Doesn't bypass
-//     Cloudflare's JS challenge but reduces friction with simpler rate
-//     limits.
+// The /new-music/ page is RYM's curated "recent releases" view — high
+// signal for Discover (current popular albums sorted by rating) and uses
+// the same .page_charts_section_charts_item_info markup as the rest of
+// RYM's charts framework.
 //
-// Implementation notes:
-//   - Pulls one chart page per refresh (top albums of the current year).
-//   - Parses album/artist pairs from chart-entry blocks.
-//   - Flagged as "rym" source; UI shows "RateYourMusic" label.
+// Cloudflare blocks raw fetches from most server IPs. FlareSolverr is
+// essentially required — without it this source returns 0. The fallback
+// chain still attempts direct fetch in case CF happens to let through.
 //
-// If you see [rym] cloudflare-challenge or [rym] no-matches in the logs and
-// want this working reliably, the realistic options are:
-//   (a) front it with a residential proxy that solves the JS challenge
-//   (b) replace the fetch with a headless browser library
-//   (c) accept that this source contributes intermittently and move on
+// Selectors below are the live RYM markup as of 2026 (captured via the
+// /api/settings/scraper-debug endpoint with via=flaresolverr):
+//
+//   <div class="page_charts_section_charts_item_info">
+//     <div class="page_charts_section_charts_top_line">
+//       <div class="page_charts_section_charts_top_line_title_artist">
+//         <div class="page_charts_section_charts_item_title">
+//           <a class="page_charts_section_charts_item_link release" href="/release/...">
+//             <span class="ui_name_locale_original">Inferno</span>
+//           </a>
+//           <span class="page_charts_section_charts_item_release_type">Album</span>
+//         </div>
+//         <div class="page_charts_section_charts_item_credited_text">
+//           <a class="artist" href="/artist/...">
+//             <span class="ui_name_locale_original">Boards of Canada</span>
+//           </a>
+//         </div>
+//       </div>
+//     </div>
+//     ...
+//   </div>
 //
 // ============================================================================
 
-const CHART_URL = (() => {
-  const year = new Date().getUTCFullYear();
-  return `https://rateyourmusic.com/charts/top/album/year/${year}/`;
-})();
+const CHART_URL = "https://rateyourmusic.com/new-music/";
+const SCORE = 0.7;
 
-const SCORE = 0.6;
-
-// 24-hour in-memory cache. RYM chart rankings barely shift inside a day and
-// avoiding repeated requests is the most polite thing we can do.
 let cache: { fetchedAt: number; seeds: RawSeed[] } | null = null;
 const CACHE_TTL_MS = 24 * 60 * 60_000;
 
@@ -56,74 +58,86 @@ const BROWSER_HEADERS: Record<string, string> = {
   "Accept-Encoding": "gzip, deflate",
   Connection: "keep-alive",
   "Upgrade-Insecure-Requests": "1",
-  // No Referer — RYM gates some pages on Referer-from-RYM; we don't want to
-  // fake an internal navigation pattern, just look like a direct visit.
 };
 
-interface ChartEntry {
-  artist: string;
-  title: string;
-}
+interface ChartEntry { artist: string; title: string }
 
-// RYM chart entries usually render like:
-//   <a class="artist" ...>Artist Name</a>
-//   <a class="album" ...>Album Title</a>
-// inside <div class="chart_item"> or similar. Their HTML changes more often
-// than most sites, so we try several anchor-class patterns and fall back to
-// generic /artist/... and /release/... link extraction.
-function parseChart(html: string): ChartEntry[] {
-  const entries: ChartEntry[] = [];
-
-  // Primary pattern — artist+album anchors paired in chart-item blocks.
-  const blockRe = /<div[^>]*class="[^"]*chart_item[^"]*"[^>]*>([\s\S]*?)<\/div>/g;
-  const artistRe = /<a[^>]*class="[^"]*artist[^"]*"[^>]*>([^<]+)<\/a>/;
-  const albumRe = /<a[^>]*class="[^"]*album[^"]*"[^>]*>([^<]+)<\/a>/;
-  let m: RegExpExecArray | null;
-  while ((m = blockRe.exec(html)) !== null) {
-    const block = m[1];
-    if (!block) continue;
-    const a = block.match(artistRe);
-    const al = block.match(albumRe);
-    if (a?.[1] && al?.[1]) {
-      entries.push({ artist: decode(a[1]), title: decode(al[1]) });
-    }
-  }
-  if (entries.length > 0) return entries;
-
-  // Fallback pattern — paired /artist/ and /release/ anchors near each other.
-  // Scrapes anchors in order, pairs an artist anchor with the next album
-  // anchor that follows it (within a reasonable window).
-  const anchors = [...html.matchAll(/<a[^>]*href="(\/(?:artist|release)\/[^"]+)"[^>]*>([^<]+)<\/a>/g)];
-  let pendingArtist: string | null = null;
-  for (const a of anchors) {
-    const href = a[1] ?? "";
-    const text = decode(a[2] ?? "");
-    if (href.startsWith("/artist/")) {
-      pendingArtist = text;
-    } else if (href.startsWith("/release/") && pendingArtist) {
-      entries.push({ artist: pendingArtist, title: text });
-      pendingArtist = null;
-    }
-  }
-  return entries;
-}
-
-function decode(s: string): string {
+function decodeEntities(s: string): string {
   return s
-    .replace(/&amp;/g, "&")
-    .replace(/&#39;/g, "'")
+    .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(+n))
+    .replace(/&#x([0-9a-f]+);/gi, (_, h) => String.fromCharCode(parseInt(h, 16)))
     .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
     .replace(/&lt;/g, "<")
     .replace(/&gt;/g, ">")
     .replace(/&nbsp;/g, " ")
-    .replace(/&#x27;/g, "'")
-    .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n)))
+    .replace(/&amp;/g, "&");
+}
+
+// Strip nested tags, decode entities, collapse whitespace. Used on the
+// inner contents of each ui_name_locale_original span which sometimes
+// wrap the text in extra inline elements for locale variants.
+function textOf(cellHtml: string): string {
+  return decodeEntities(cellHtml.replace(/<[^>]+>/g, " "))
+    .replace(/\s+/g, " ")
     .trim();
 }
 
+// Parses RYM chart-item markup. Each chart entry sits inside a
+// .page_charts_section_charts_item_info container. We split on those
+// containers, then extract the album link, artist link, and release type
+// from each.
+//
+// The container is itself nested inside other elements with overlapping
+// classes; rather than trying to bracket-match nested divs (regex pain),
+// we use a lookahead split: each block ends where the next container
+// begins, or at </main> / </body>.
+function parseChartItems(html: string): ChartEntry[] {
+  const entries: ChartEntry[] = [];
+  const itemRe =
+    /<div[^>]*class="[^"]*\bpage_charts_section_charts_item_info\b[^"]*"[^>]*>([\s\S]*?)(?=<div[^>]*class="[^"]*\bpage_charts_section_charts_item_info\b|<\/main>|<\/body>)/g;
+
+  // Album title: the link with both "page_charts_section_charts_item_link"
+  // and "release" classes contains the ui_name_locale_original span with
+  // the title text.
+  const albumRe =
+    /<a[^>]*class="[^"]*\bpage_charts_section_charts_item_link\s+release\b[^"]*"[^>]*>[\s\S]*?<span[^>]*class="[^"]*\bui_name_locale_original\b[^"]*"[^>]*>([\s\S]*?)<\/span>/i;
+
+  // Artist: the link with class "artist" pointing at /artist/...
+  const artistRe =
+    /<a[^>]*class="[^"]*\bartist\b[^"]*"[^>]*href="\/artist\/[^"]*"[^>]*>[\s\S]*?<span[^>]*class="[^"]*\bui_name_locale_original\b[^"]*"[^>]*>([\s\S]*?)<\/span>/i;
+
+  // Release type — used to filter out singles/EPs/comps so Discover
+  // suggestions stay album-focused.
+  const typeRe =
+    /<span[^>]*class="[^"]*\bpage_charts_section_charts_item_release_type\b[^"]*"[^>]*>([\s\S]*?)<\/span>/i;
+
+  let m: RegExpExecArray | null;
+  while ((m = itemRe.exec(html)) !== null) {
+    const block = m[1] ?? "";
+
+    const releaseType = (() => {
+      const t = block.match(typeRe);
+      return t?.[1] ? textOf(t[1]) : "Album";
+    })();
+    // RYM exposes Album, EP, Single, Mixtape, Compilation, etc. We keep
+    // Album + EP (both album-shaped for Shirabe's purposes), skip the rest.
+    const ok = ["album", "ep"].includes(releaseType.toLowerCase());
+    if (!ok) continue;
+
+    const albumMatch = block.match(albumRe);
+    const artistMatch = block.match(artistRe);
+    if (!albumMatch?.[1] || !artistMatch?.[1]) continue;
+
+    const title = textOf(albumMatch[1]);
+    const artist = textOf(artistMatch[1]);
+    if (artist && title) entries.push({ artist, title });
+  }
+
+  return entries;
+}
+
 function looksLikeChallenge(html: string): boolean {
-  // Cloudflare challenge pages contain a few telltale strings. If we see any,
-  // bail with a clear log rather than wasting cycles parsing.
   const sniff = html.slice(0, 4000).toLowerCase();
   return (
     sniff.includes("cf-challenge") ||
@@ -136,12 +150,10 @@ function looksLikeChallenge(html: string): boolean {
 async function fetchChart(): Promise<RawSeed[]> {
   let html: string | null = null;
 
-  // Prefer FlareSolverr when configured — RYM is the textbook case for it.
   if (flaresolverrConfigured()) {
     html = await fetchViaFlareSolverr(CHART_URL, "rym/flaresolverr");
   }
 
-  // Direct fetch as fallback (or primary when no FlareSolverr).
   if (!html) {
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), 15_000);
@@ -162,25 +174,26 @@ async function fetchChart(): Promise<RawSeed[]> {
 
   if (looksLikeChallenge(html)) {
     console.warn(
-      "[rym] cloudflare-challenge — RYM is blocking the request. " +
+      "[rym] cloudflare-challenge — RYM blocked the request. " +
       (flaresolverrConfigured()
-        ? "FlareSolverr is configured but the response still looks like a challenge page."
-        : "Set flaresolverr_url in Settings to route fetches through a browser-resolver."),
+        ? "FlareSolverr is configured but couldn't solve the challenge."
+        : "Set flaresolverr_url in Settings — RYM almost always needs the proxy."),
     );
     return [];
   }
 
-  const entries = parseChart(html);
+  const entries = parseChartItems(html);
   if (entries.length === 0) {
     console.warn(
-      `[rym] no-matches — fetched ${html.length} bytes from RYM but parsed 0 album entries. ` +
-      `HTML structure may have changed. First 500 chars after <body> for diagnosis:\n` +
+      `[rym] no-matches — fetched ${html.length} bytes from ${CHART_URL} ` +
+      `but parsed 0 chart items. RYM may have changed their markup. ` +
+      `First 2000 chars of <body> (scripts/styles stripped) for diagnosis:\n` +
       htmlPreview(html),
     );
     return [];
   }
 
-  return entries.slice(0, 25).map<RawSeed>((e) => ({
+  return entries.slice(0, 30).map<RawSeed>((e) => ({
     source: "rym",
     artist: e.artist,
     title: e.title,
@@ -188,7 +201,7 @@ async function fetchChart(): Promise<RawSeed[]> {
     artist_mbid: null,
     mode: "album",
     score: SCORE,
-    reason: "Top of the year on RateYourMusic",
+    reason: "New music on RateYourMusic",
   }));
 }
 
@@ -200,9 +213,6 @@ export const rymSource: Source = {
       return cache.seeds;
     }
     const seeds = await fetchChart();
-    // Cache even an empty result so a Cloudflare block doesn't trigger a
-    // retry every time pullSuggestions runs. 24 hours is plenty for chart
-    // data.
     cache = { fetchedAt: Date.now(), seeds };
     console.log(`[rym] cached ${seeds.length} seeds for 24h`);
     return seeds;
