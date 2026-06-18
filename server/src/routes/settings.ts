@@ -236,8 +236,10 @@ settingsRouter.get("/scraper-debug", async (req, res) => {
   const targets: Record<string, string> = {
     aoty: `https://www.albumoftheyear.org/must-hear/${year}/`,
     rym: `https://rateyourmusic.com/new-music/`,
-    rym_charts: "https://rateyourmusic.com/charts/",
     rym_new_music: "https://rateyourmusic.com/new-music/",
+    rym_charts: "https://rateyourmusic.com/charts/",
+    rym_year: `https://rateyourmusic.com/charts/top/album/${year}/`,
+    rym_all_time: "https://rateyourmusic.com/charts/top/album/all-time/",
     stereogum_aotw: "https://www.stereogum.com/category/album-of-the-week/feed/",
     stereogum_premature: "https://www.stereogum.com/category/premature-evaluation/feed/",
     npr: "https://feeds.npr.org/1039/rss.xml",
