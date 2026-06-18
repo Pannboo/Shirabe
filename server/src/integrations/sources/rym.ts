@@ -19,24 +19,22 @@ import { htmlPreview } from "./rssHelpers.js";
 // essentially required — without it this source returns 0. The fallback
 // chain still attempts direct fetch in case CF happens to let through.
 //
-// Selectors below are the live RYM markup as of 2026 (captured via the
-// /api/settings/scraper-debug endpoint with via=flaresolverr):
+// /new-music/ uses a different markup family than RYM's /charts/ pages.
+// Confirmed against the actual response via the scraper-debug endpoint:
 //
-//   <div class="page_charts_section_charts_item_info">
-//     <div class="page_charts_section_charts_top_line">
-//       <div class="page_charts_section_charts_top_line_title_artist">
-//         <div class="page_charts_section_charts_item_title">
-//           <a class="page_charts_section_charts_item_link release" href="/release/...">
-//             <span class="ui_name_locale_original">Inferno</span>
-//           </a>
-//           <span class="page_charts_section_charts_item_release_type">Album</span>
-//         </div>
-//         <div class="page_charts_section_charts_item_credited_text">
-//           <a class="artist" href="/artist/...">
-//             <span class="ui_name_locale_original">Boards of Canada</span>
-//           </a>
-//         </div>
-//       </div>
+//   <div class="newreleases_itembox excl_item release_<ID> artist_<ID> ...">
+//     <div class="newreleases_item_artbox">
+//       <a href="/release/album/<artist>/<title>/" title="<Title>">
+//         <img class="newreleases_item_art" src="...">
+//       </a>
+//     </div>
+//     <div class="newreleases_item_..."> (varies)
+//       <a href="/release/album/..." class="album newreleases_item_title"
+//          title="[Album<ID>]">Inferno</a>
+//       <span class="newreleases_item_artist">
+//         <a href="/artist/..." class="artist">Boards of Canada</a>
+//       </span>
+//       <div class="newreleases_item_releasedate">29 May 2026</div>
 //     </div>
 //     ...
 //   </div>
@@ -83,55 +81,56 @@ function textOf(cellHtml: string): string {
     .trim();
 }
 
-// Parses RYM chart-item markup. Each chart entry sits inside a
-// .page_charts_section_charts_item_info container. We split on those
-// containers, then extract the album link, artist link, and release type
-// from each.
-//
-// The container is itself nested inside other elements with overlapping
-// classes; rather than trying to bracket-match nested divs (regex pain),
-// we use a lookahead split: each block ends where the next container
-// begins, or at </main> / </body>.
+// Parses RYM's /new-music/ markup. Each release sits inside a
+// .newreleases_itembox container. We split on those containers via
+// lookahead (regex doesn't bracket-match nested divs), then pull the
+// title from the .album.newreleases_item_title anchor and the artist
+// from the .artist anchor inside the .newreleases_item_artist span.
 function parseChartItems(html: string): ChartEntry[] {
   const entries: ChartEntry[] = [];
+  const seen = new Set<string>();
+
+  // Each itembox runs until the next itembox or end-of-body. Lookahead
+  // avoids the bracket-matching problem entirely.
   const itemRe =
-    /<div[^>]*class="[^"]*\bpage_charts_section_charts_item_info\b[^"]*"[^>]*>([\s\S]*?)(?=<div[^>]*class="[^"]*\bpage_charts_section_charts_item_info\b|<\/main>|<\/body>)/g;
+    /<div[^>]*class="[^"]*\bnewreleases_itembox\b[^"]*"[^>]*>([\s\S]*?)(?=<div[^>]*class="[^"]*\bnewreleases_itembox\b|<\/main>|<\/body>)/g;
 
-  // Album title: the link with both "page_charts_section_charts_item_link"
-  // and "release" classes contains the ui_name_locale_original span with
-  // the title text.
+  // Album title — anchor carrying both "album" and "newreleases_item_title"
+  // classes (order can vary).
   const albumRe =
-    /<a[^>]*class="[^"]*\bpage_charts_section_charts_item_link\s+release\b[^"]*"[^>]*>[\s\S]*?<span[^>]*class="[^"]*\bui_name_locale_original\b[^"]*"[^>]*>([\s\S]*?)<\/span>/i;
+    /<a[^>]*class="[^"]*\b(?:album\s+newreleases_item_title|newreleases_item_title\s+album)\b[^"]*"[^>]*>([\s\S]*?)<\/a>/i;
 
-  // Artist: the link with class "artist" pointing at /artist/...
-  const artistRe =
-    /<a[^>]*class="[^"]*\bartist\b[^"]*"[^>]*href="\/artist\/[^"]*"[^>]*>[\s\S]*?<span[^>]*class="[^"]*\bui_name_locale_original\b[^"]*"[^>]*>([\s\S]*?)<\/span>/i;
-
-  // Release type — used to filter out singles/EPs/comps so Discover
-  // suggestions stay album-focused.
-  const typeRe =
-    /<span[^>]*class="[^"]*\bpage_charts_section_charts_item_release_type\b[^"]*"[^>]*>([\s\S]*?)<\/span>/i;
+  // Artist — the .artist anchor is wrapped in a .newreleases_item_artist
+  // span. We match the wrapping span so we don't pick up incidental .artist
+  // links elsewhere on the page (sidebar, recommendations, etc).
+  const artistWrapRe =
+    /<span[^>]*class="[^"]*\bnewreleases_item_artist\b[^"]*"[^>]*>([\s\S]*?)<\/span>/i;
+  const artistAnchorRe =
+    /<a[^>]*class="[^"]*\bartist\b[^"]*"[^>]*>([\s\S]*?)<\/a>/i;
 
   let m: RegExpExecArray | null;
   while ((m = itemRe.exec(html)) !== null) {
     const block = m[1] ?? "";
 
-    const releaseType = (() => {
-      const t = block.match(typeRe);
-      return t?.[1] ? textOf(t[1]) : "Album";
-    })();
-    // RYM exposes Album, EP, Single, Mixtape, Compilation, etc. We keep
-    // Album + EP (both album-shaped for Shirabe's purposes), skip the rest.
-    const ok = ["album", "ep"].includes(releaseType.toLowerCase());
-    if (!ok) continue;
-
     const albumMatch = block.match(albumRe);
-    const artistMatch = block.match(artistRe);
-    if (!albumMatch?.[1] || !artistMatch?.[1]) continue;
+    if (!albumMatch?.[1]) continue;
+
+    const artistWrapMatch = block.match(artistWrapRe);
+    if (!artistWrapMatch?.[1]) continue;
+    const artistAnchorMatch = artistWrapMatch[1].match(artistAnchorRe);
+    if (!artistAnchorMatch?.[1]) continue;
 
     const title = textOf(albumMatch[1]);
-    const artist = textOf(artistMatch[1]);
-    if (artist && title) entries.push({ artist, title });
+    const artist = textOf(artistAnchorMatch[1]);
+    if (!artist || !title) continue;
+
+    // Dedupe — the /new-music/ page sometimes shows the same release in
+    // multiple sections (today/this week/featured).
+    const k = `${artist.toLowerCase()}|${title.toLowerCase()}`;
+    if (seen.has(k)) continue;
+    seen.add(k);
+
+    entries.push({ artist, title });
   }
 
   return entries;
