@@ -10,3 +10,10 @@ music/
 server/src/static/
 client/dist/
 .DS_Store
+
+# tsc incremental-build caches
+*.tsbuildinfo
+
+# Per-instance integration data (created by compose)
+slskd/
+navidrome/
