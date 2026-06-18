@@ -31,6 +31,11 @@ export interface ArtistLinksStatsResponse {
   recent_missing: { mb_artist_id: string; artist_name: string | null; updated_at: number }[];
 }
 
+export interface MediaCacheStatsResponse {
+  cover_art: { status: Record<string, number> };
+  artist_images: { status: Record<string, number> };
+}
+
 export interface ImportStatus {
   source: "lastfm" | "listenbrainz";
   phase: "idle" | "running" | "done" | "error";

@@ -8,6 +8,7 @@ import { syncNavidromeLibrary } from "../jobs/syncNavidromeLibrary.js";
 import { libraryAlbumCount, libraryLastSync } from "../db/queries/library.js";
 import { artistImageStats, requeueAllMissingArtistImages, reseedArtistImages } from "../db/queries/artistImages.js";
 import { artistLinksStats, requeueAllMissingArtistLinks, reseedArtistLinks } from "../db/queries/artistLinks.js";
+import { coverartStats, requeueAllMissingCoverart, reseedCoverart } from "../db/queries/coverart.js";
 import { getImportStatus, importLastFmHistory, importListenBrainzHistory } from "../jobs/importHistory.js";
 import { db } from "../db/client.js";
 import { getAdminId } from "../db/queries/users.js";
@@ -106,6 +107,47 @@ settingsRouter.post("/artist-links/requeue", (req, res) => {
   }
   const requeued = requeueAllMissingArtistLinks();
   res.json({ mode: "missing_only", requeued });
+});
+
+// === Unified media cache (album cover art + artist images) ===============
+//
+// Single panel in Settings drives both caches at once. Keeps the per-cache
+// endpoints (artist-images/*) for backwards compat and edge cases, but the
+// UI uses these aggregated routes so a "Wipe + re-seed all" rebuilds both
+// in one click.
+
+settingsRouter.get("/media-cache", (_req, res) => {
+  res.json({
+    cover_art: coverartStats(),
+    artist_images: artistImageStats(),
+  });
+});
+
+settingsRouter.post("/media-cache/requeue", (req, res) => {
+  const userId = req.user!.user_id;
+  if (req.query.all === "true") {
+    // Re-seed both from scrobble history. For artist_images we pull the
+    // distinct artist list from scrobbles ourselves (the helper takes a
+    // list); coverart's reseed talks to the scrobbles table directly.
+    const artists = (db.prepare(`SELECT DISTINCT artist FROM scrobbles WHERE user_id = ?`)
+      .all(userId) as { artist: string }[])
+      .map((r) => r.artist);
+    const cover = reseedCoverart(userId);
+    const ai = reseedArtistImages(artists);
+    res.json({
+      mode: "reseed",
+      cover_art: cover,
+      artist_images: ai,
+    });
+    return;
+  }
+  const cover = requeueAllMissingCoverart();
+  const ai = requeueAllMissingArtistImages();
+  res.json({
+    mode: "missing_only",
+    cover_art: { requeued: cover },
+    artist_images: { requeued: ai },
+  });
 });
 
 // === Scrobble history import =============================================

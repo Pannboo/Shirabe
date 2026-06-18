@@ -78,3 +78,53 @@ export function setCoverartYear(artist: string, album: string, year: number, mbR
 export function markCoverartYearMissing(artist: string, album: string): void {
   markYearAttemptedStmt.run(artist, album);
 }
+
+// === Diagnostics + admin actions ===========================================
+//
+// Mirror of the artist_images query layer so the unified "Media cache"
+// settings panel can act on coverart with the same shape of operations.
+
+const statsByStatus = db.prepare(`
+  SELECT status, COUNT(*) as count FROM coverart GROUP BY status
+`);
+const resetAllMissing = db.prepare(`
+  UPDATE coverart SET status = 'pending', updated_at = 0 WHERE status = 'missing'
+`);
+const truncateAll = db.prepare(`DELETE FROM coverart`);
+
+// Re-seed from every distinct (artist, album) pair the user has scrobbled.
+// updated_at=0 so the stale-pending window check fires immediately.
+const reseedFromScrobblesStmt = db.prepare(`
+  INSERT INTO coverart (artist, album, status, updated_at)
+  SELECT DISTINCT artist, album, 'pending', 0
+  FROM scrobbles
+  WHERE user_id = ? AND album IS NOT NULL AND album != ''
+  ON CONFLICT(artist, album) DO UPDATE SET status = 'pending', updated_at = 0
+`);
+
+export interface CoverartStats {
+  status: Record<string, number>;
+}
+
+export function coverartStats(): CoverartStats {
+  const rows = statsByStatus.all() as { status: string; count: number }[];
+  const status: Record<string, number> = {};
+  for (const r of rows) status[r.status] = r.count;
+  return { status };
+}
+
+export function requeueAllMissingCoverart(): number {
+  return resetAllMissing.run().changes;
+}
+
+// Wipes the cache and re-seeds from scrobbles in a single transaction.
+// Returns counts so the UI can confirm what just happened.
+export function reseedCoverart(userId: number): { wiped: number; queued: number } {
+  let wiped = 0;
+  let queued = 0;
+  db.transaction(() => {
+    wiped = truncateAll.run().changes;
+    queued = reseedFromScrobblesStmt.run(userId).changes;
+  })();
+  return { wiped, queued };
+}

@@ -10,6 +10,7 @@ import type {
   ArtistLinksStatsResponse,
   ImportStatusResponse,
   LibraryStatusResponse,
+  MediaCacheStatsResponse,
 } from "@/lib/dto";
 import { useTheme } from "@/hooks/useTheme";
 import { formatNumber, formatRelative } from "@/lib/format";
@@ -19,12 +20,14 @@ export default function Settings() {
   const [library, setLibrary] = useState<LibraryStatusResponse | null>(null);
   const [artistImages, setArtistImages] = useState<ArtistImageStatsResponse | null>(null);
   const [artistLinks, setArtistLinks] = useState<ArtistLinksStatsResponse | null>(null);
+  const [mediaCache, setMediaCache] = useState<MediaCacheStatsResponse | null>(null);
   const [importStatus, setImportStatus] = useState<ImportStatusResponse | null>(null);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [requeuing, setRequeuing] = useState(false);
   const [requeuingLinks, setRequeuingLinks] = useState(false);
+  const [requeuingMedia, setRequeuingMedia] = useState(false);
   const { setTheme } = useTheme();
 
   useEffect(() => {
@@ -32,6 +35,7 @@ export default function Settings() {
     api<LibraryStatusResponse>("/api/settings/library").then(setLibrary).catch(() => {});
     api<ArtistImageStatsResponse>("/api/settings/artist-images").then(setArtistImages).catch(() => {});
     api<ArtistLinksStatsResponse>("/api/settings/artist-links").then(setArtistLinks).catch(() => {});
+    api<MediaCacheStatsResponse>("/api/settings/media-cache").then(setMediaCache).catch(() => {});
     api<ImportStatusResponse>("/api/settings/import/status").then(setImportStatus).catch(() => {});
   }, []);
 
@@ -60,6 +64,37 @@ export default function Settings() {
       setImportStatus(fresh);
     } catch (err) {
       alert(`Failed to start ${source} import: ${err instanceof Error ? err.message : "unknown"}`);
+    }
+  }
+
+  async function requeueMediaCache(mode: "missing" | "all") {
+    setRequeuingMedia(true);
+    try {
+      const path = mode === "all"
+        ? "/api/settings/media-cache/requeue?all=true"
+        : "/api/settings/media-cache/requeue";
+      const result = await api<
+        | { mode: "missing_only"; cover_art: { requeued: number }; artist_images: { requeued: number } }
+        | { mode: "reseed"; cover_art: { wiped: number; queued: number }; artist_images: { wiped: number; queued: number } }
+      >(path, { method: "POST" });
+      const fresh = await api<MediaCacheStatsResponse>("/api/settings/media-cache");
+      setMediaCache(fresh);
+      if (result.mode === "missing_only") {
+        alert(
+          `Retried ${result.cover_art.requeued} missing cover-art rows ` +
+          `and ${result.artist_images.requeued} missing artist images. ` +
+          `Resolver will work through them over the next minute or two.`,
+        );
+      } else {
+        alert(
+          `Wiped + re-seeded:\n` +
+          `  Cover art — ${result.cover_art.wiped} wiped, ${result.cover_art.queued} queued\n` +
+          `  Artist images — ${result.artist_images.wiped} wiped, ${result.artist_images.queued} queued\n` +
+          `Resolver runs every 20-30s; full pass takes a few minutes.`,
+        );
+      }
+    } finally {
+      setRequeuingMedia(false);
     }
   }
 
@@ -315,51 +350,45 @@ export default function Settings() {
         </Field>
       </Section>
 
-      <Section title="Artist image cache">
+      <Section title="Media cache">
         <p className="text-xs text-muted-foreground">
-          Top-artist tiles try MusicBrainz → ListenBrainz → Last.fm <code>artist.search</code> in order.
-          Anything that comes back without a usable photo (or hits the deprecated Last.fm star placeholder)
-          is cached as <strong>missing</strong> and falls back to the artist's most-played album cover.
+          Album cover art and artist images are resolved in the background from MusicBrainz /
+          Cover Art Archive / ListenBrainz / Deezer / Last.fm. Re-runs are safe — existing
+          rows are updated in place. Use <strong>Retry missing</strong> if a few rows didn't
+          resolve last pass; <strong>Wipe + re-seed all</strong> after a chain change or to
+          force a full refresh.
         </p>
-        {artistImages && (
-          <div className="rounded-xl border border-border bg-background/40 p-3 space-y-2">
-            <div className="flex items-center gap-4 text-xs flex-wrap">
-              <span>
-                <span className="font-medium text-foreground tabular-nums">{artistImages.status.resolved ?? 0}</span>
-                <span className="ml-1 text-muted-foreground">resolved</span>
-              </span>
-              <span>
-                <span className="font-medium text-foreground tabular-nums">{artistImages.status.missing ?? 0}</span>
-                <span className="ml-1 text-muted-foreground">missing</span>
-              </span>
-              <span>
-                <span className="font-medium text-foreground tabular-nums">{artistImages.status.pending ?? 0}</span>
-                <span className="ml-1 text-muted-foreground">pending</span>
-              </span>
-              <Button size="sm" variant="outline" onClick={() => requeueArtistImages("missing")} disabled={requeuing}>
-                {requeuing ? "Requeuing…" : "Retry missing"}
+        {mediaCache && (
+          <div className="rounded-xl border border-border bg-background/40 p-3 space-y-3">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <MediaCacheStat label="Album cover art" status={mediaCache.cover_art.status} />
+              <MediaCacheStat label="Artist images" status={mediaCache.artist_images.status} />
+            </div>
+            <div className="flex items-center gap-2 flex-wrap pt-1">
+              <Button size="sm" variant="outline" onClick={() => requeueMediaCache("missing")} disabled={requeuingMedia}>
+                {requeuingMedia ? "Working…" : "Retry missing"}
               </Button>
-              <Button size="sm" variant="outline" onClick={() => requeueArtistImages("all")} disabled={requeuing}>
-                {requeuing ? "…" : "Wipe + re-seed all"}
+              <Button size="sm" variant="outline" onClick={() => requeueMediaCache("all")} disabled={requeuingMedia}>
+                {requeuingMedia ? "…" : "Wipe + re-seed all"}
               </Button>
             </div>
-            {artistImages.recent_missing.length > 0 && (
-              <details>
-                <summary className="text-xs text-muted-foreground cursor-pointer hover:text-foreground">
-                  Show {artistImages.recent_missing.length} most recent missing artists
-                </summary>
-                <ul className="mt-2 max-h-48 overflow-auto text-[11px] text-muted-foreground font-mono space-y-0.5">
-                  {artistImages.recent_missing.map((m) => (
-                    <li key={m.artist}>{m.artist}</li>
-                  ))}
-                </ul>
-              </details>
-            )}
             <p className="text-[11px] text-muted-foreground">
-              Tip: server logs (<code>[artist-image] &lt;name&gt; → mb=… lb=… lfm=…</code>) show which lookup
-              contributed for each resolve.
+              Tip: server logs (<code>[artist-image]</code>, <code>[coverart]</code>) show what each lookup
+              returned per artist/album.
             </p>
           </div>
+        )}
+        {artistImages && artistImages.recent_missing.length > 0 && (
+          <details>
+            <summary className="text-xs text-muted-foreground cursor-pointer hover:text-foreground">
+              Show {artistImages.recent_missing.length} most recent missing artists
+            </summary>
+            <ul className="mt-2 max-h-48 overflow-auto text-[11px] text-muted-foreground font-mono space-y-0.5">
+              {artistImages.recent_missing.map((m) => (
+                <li key={m.artist}>{m.artist}</li>
+              ))}
+            </ul>
+          </details>
         )}
       </Section>
 
@@ -505,6 +534,28 @@ function Toggle({ label, value, onChange }: { label: string; value: boolean; onC
       <input type="checkbox" checked={value} onChange={(e) => onChange(e.target.checked)} className="accent-accent" />
       <span>{label}</span>
     </label>
+  );
+}
+
+function MediaCacheStat({ label, status }: { label: string; status: Record<string, number> }) {
+  return (
+    <div className="rounded-lg border border-border/60 bg-background/60 px-3 py-2">
+      <div className="eyebrow mb-1">{label}</div>
+      <div className="flex items-center gap-3 text-xs flex-wrap">
+        <span>
+          <span className="font-medium text-foreground tabular-nums">{status.resolved ?? 0}</span>
+          <span className="ml-1 text-muted-foreground">resolved</span>
+        </span>
+        <span>
+          <span className="font-medium text-foreground tabular-nums">{status.missing ?? 0}</span>
+          <span className="ml-1 text-muted-foreground">missing</span>
+        </span>
+        <span>
+          <span className="font-medium text-foreground tabular-nums">{status.pending ?? 0}</span>
+          <span className="ml-1 text-muted-foreground">pending</span>
+        </span>
+      </div>
+    </div>
   );
 }
 
