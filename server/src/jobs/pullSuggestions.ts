@@ -4,7 +4,7 @@ import { isAlbumOwned } from "../db/queries/library.js";
 import { sources } from "../integrations/sources/index.js";
 import { findRelease } from "../integrations/musicbrainz.js";
 import { getCoverArtUrl } from "../integrations/coverart.js";
-import { getLbAlbumCover } from "../integrations/listenbrainz.js";
+import { lookupLbRelease } from "../integrations/listenbrainz.js";
 import { getLastFmAlbumImage } from "../integrations/lastfm.js";
 import type { MatchStatus, SuggestionSource } from "../types/domain.js";
 
@@ -95,11 +95,19 @@ export async function pullSuggestions(): Promise<PullResult> {
       }
 
       // Same fallback chain as the cover-art resolver — MB/CAA first, then
-      // LB metadata, then Last.fm album.getInfo. Means new sources that
-      // don't bring their own art (RSS review feeds) still get thumbnails.
+      // LB metadata (route MBID through CAA's JSON API), then Last.fm
+      // album.getInfo. Means new sources that don't bring their own art
+      // (RSS review feeds) still get thumbnails.
       let coverArt: string | null = null;
       if (releaseId) coverArt = await getCoverArtUrl(releaseId);
-      if (!coverArt && seed.title) coverArt = await getLbAlbumCover(seed.artist, seed.title);
+      if (!coverArt && seed.title) {
+        const lb = await lookupLbRelease(seed.artist, seed.title);
+        const lbMbid = lb?.caa_release_mbid ?? lb?.release_mbid ?? null;
+        if (lbMbid) {
+          if (!releaseId) releaseId = lbMbid;
+          coverArt = await getCoverArtUrl(lbMbid);
+        }
+      }
       if (!coverArt && seed.title) coverArt = await getLastFmAlbumImage(seed.artist, seed.title);
 
       insertSuggestion({

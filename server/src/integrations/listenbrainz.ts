@@ -79,21 +79,42 @@ export async function fetchListenBrainzSuggestions(): Promise<ListenBrainzSeed[]
 // Archive can't resolve cover art or artist images for a given pair.
 
 interface LbReleaseMetadata {
-  artist?: { name?: string };
-  release?: { caa_release_mbid?: string; mbid?: string; name?: string; year?: number };
+  artist?: { name?: string; artist_mbids?: string[] };
+  release?: {
+    caa_release_mbid?: string;
+    mbid?: string;
+    name?: string;
+    year?: number;
+    caa_id?: number;
+  };
 }
 
-// Resolve an album cover via ListenBrainz's release-group lookup. Returns a
-// CAA URL when available.
-export async function getLbAlbumCover(artist: string, album: string): Promise<string | null> {
+export interface LbAlbumLookup {
+  /** Canonical MB release MBID known to have cover art on CAA. Preferred. */
+  caa_release_mbid: string | null;
+  /** Plain release MBID — may or may not have CAA art. */
+  release_mbid: string | null;
+  /** Release year, when LB happens to know it. */
+  year: number | null;
+}
+
+// Resolve a release on ListenBrainz from a fuzzy artist + album lookup.
+// LB does release-group-level canonicalization, so it often finds the
+// right MBID even when MusicBrainz's direct release search misses.
+// Caller should pass caa_release_mbid through CAA's JSON API to get the
+// canonical front-cover URL (file naming on CAA isn't predictable).
+export async function lookupLbRelease(artist: string, album: string): Promise<LbAlbumLookup | null> {
   const params = new URLSearchParams({
     artist_name: artist,
     release_name: album,
   });
   const data = await lbGet<LbReleaseMetadata>(`/metadata/lookup/?${params.toString()}`);
-  const caaId = data?.release?.caa_release_mbid ?? data?.release?.mbid;
-  if (!caaId) return null;
-  return `https://archive.org/download/mbid-${caaId}/mbid-${caaId}-front-500.jpg`;
+  if (!data?.release) return null;
+  return {
+    caa_release_mbid: data.release.caa_release_mbid ?? null,
+    release_mbid: data.release.mbid ?? null,
+    year: data.release.year ?? null,
+  };
 }
 
 interface LbArtistMetadata {
