@@ -178,9 +178,15 @@ settingsRouter.post("/media-cache/requeue", (req, res) => {
 //   'http://shirabe:3000/api/settings/scraper-debug?source=rym&via=flaresolverr'
 
 // Counts occurrences of known scraper-target selectors / markers in the
-// raw response. Tells us at a glance whether the markup we expect actually
-// exists in the doc, without having to page through 200KB of HTML.
-function probeSelectors(text: string): Record<string, number> {
+// raw response, plus returns a context snippet around the FIRST hit of
+// each found selector. The snippet shows ~250 chars on either side of
+// the match — usually enough to see the wrapping element and its
+// classes, which is what we need to write a working parser.
+interface SelectorProbe {
+  count: number;
+  first_context?: string;
+}
+function probeSelectors(text: string): Record<string, SelectorProbe> {
   const probes = [
     // RYM chart-item markers
     "page_charts_section_charts_item_info",
@@ -198,13 +204,24 @@ function probeSelectors(text: string): Record<string, number> {
     "Just a moment",
     "Checking your browser",
   ];
-  const result: Record<string, number> = {};
+  const result: Record<string, SelectorProbe> = {};
   for (const p of probes) {
-    // count non-overlapping occurrences
     let n = 0;
     let i = 0;
-    while ((i = text.indexOf(p, i)) !== -1) { n += 1; i += p.length; }
-    if (n > 0) result[p] = n;
+    let firstIdx = -1;
+    while ((i = text.indexOf(p, i)) !== -1) {
+      if (firstIdx === -1) firstIdx = i;
+      n += 1;
+      i += p.length;
+    }
+    if (n === 0) continue;
+    const ctxStart = Math.max(0, firstIdx - 250);
+    const ctxEnd = Math.min(text.length, firstIdx + p.length + 250);
+    const first_context = text
+      .slice(ctxStart, ctxEnd)
+      .replace(/\s+/g, " ")
+      .trim();
+    result[p] = { count: n, first_context };
   }
   return result;
 }
