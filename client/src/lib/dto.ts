@@ -34,6 +34,7 @@ export interface ArtistLinksStatsResponse {
 export interface MediaCacheStatsResponse {
   cover_art: { status: Record<string, number> };
   artist_images: { status: Record<string, number> };
+  artist_links: { status: Record<string, number> };
 }
 
 export interface ImportStatus {

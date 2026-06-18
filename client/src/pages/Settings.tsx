@@ -7,7 +7,6 @@ import { api } from "@/lib/api";
 import type {
   AppSettingsDto,
   ArtistImageStatsResponse,
-  ArtistLinksStatsResponse,
   ImportStatusResponse,
   LibraryStatusResponse,
   MediaCacheStatsResponse,
@@ -19,14 +18,12 @@ export default function Settings() {
   const [settings, setSettings] = useState<AppSettingsDto | null>(null);
   const [library, setLibrary] = useState<LibraryStatusResponse | null>(null);
   const [artistImages, setArtistImages] = useState<ArtistImageStatsResponse | null>(null);
-  const [artistLinks, setArtistLinks] = useState<ArtistLinksStatsResponse | null>(null);
   const [mediaCache, setMediaCache] = useState<MediaCacheStatsResponse | null>(null);
   const [importStatus, setImportStatus] = useState<ImportStatusResponse | null>(null);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [requeuing, setRequeuing] = useState(false);
-  const [requeuingLinks, setRequeuingLinks] = useState(false);
   const [requeuingMedia, setRequeuingMedia] = useState(false);
   const { setTheme } = useTheme();
 
@@ -34,7 +31,6 @@ export default function Settings() {
     api<AppSettingsDto>("/api/settings").then(setSettings);
     api<LibraryStatusResponse>("/api/settings/library").then(setLibrary).catch(() => {});
     api<ArtistImageStatsResponse>("/api/settings/artist-images").then(setArtistImages).catch(() => {});
-    api<ArtistLinksStatsResponse>("/api/settings/artist-links").then(setArtistLinks).catch(() => {});
     api<MediaCacheStatsResponse>("/api/settings/media-cache").then(setMediaCache).catch(() => {});
     api<ImportStatusResponse>("/api/settings/import/status").then(setImportStatus).catch(() => {});
   }, []);
@@ -74,49 +70,40 @@ export default function Settings() {
         ? "/api/settings/media-cache/requeue?all=true"
         : "/api/settings/media-cache/requeue";
       const result = await api<
-        | { mode: "missing_only"; cover_art: { requeued: number }; artist_images: { requeued: number } }
-        | { mode: "reseed"; cover_art: { wiped: number; queued: number }; artist_images: { wiped: number; queued: number } }
+        | {
+            mode: "missing_only";
+            cover_art: { requeued: number };
+            artist_images: { requeued: number };
+            artist_links: { requeued: number };
+          }
+        | {
+            mode: "reseed";
+            cover_art: { wiped: number; queued: number };
+            artist_images: { wiped: number; queued: number };
+            artist_links: { wiped: number; queued: number };
+          }
       >(path, { method: "POST" });
       const fresh = await api<MediaCacheStatsResponse>("/api/settings/media-cache");
       setMediaCache(fresh);
       if (result.mode === "missing_only") {
         alert(
-          `Retried ${result.cover_art.requeued} missing cover-art rows ` +
-          `and ${result.artist_images.requeued} missing artist images. ` +
-          `Resolver will work through them over the next minute or two.`,
+          `Retried:\n` +
+          `  Cover art — ${result.cover_art.requeued} rows\n` +
+          `  Artist images — ${result.artist_images.requeued} rows\n` +
+          `  Artist links — ${result.artist_links.requeued} rows\n` +
+          `Resolvers will work through them over the next minute or two.`,
         );
       } else {
         alert(
           `Wiped + re-seeded:\n` +
           `  Cover art — ${result.cover_art.wiped} wiped, ${result.cover_art.queued} queued\n` +
           `  Artist images — ${result.artist_images.wiped} wiped, ${result.artist_images.queued} queued\n` +
-          `Resolver runs every 20-30s; full pass takes a few minutes.`,
+          `  Artist links — ${result.artist_links.wiped} wiped, ${result.artist_links.queued} queued\n` +
+          `Resolvers run every 20-30s; full pass takes a few minutes.`,
         );
       }
     } finally {
       setRequeuingMedia(false);
-    }
-  }
-
-  async function requeueArtistLinks(mode: "missing" | "all") {
-    setRequeuingLinks(true);
-    try {
-      const path = mode === "all"
-        ? "/api/settings/artist-links/requeue?all=true"
-        : "/api/settings/artist-links/requeue";
-      const result = await api<
-        | { mode: "missing_only"; requeued: number }
-        | { mode: "reseed"; wiped: number; queued: number }
-      >(path, { method: "POST" });
-      const fresh = await api<ArtistLinksStatsResponse>("/api/settings/artist-links");
-      setArtistLinks(fresh);
-      if (result.mode === "missing_only") {
-        alert(`Requeued ${result.requeued} missing artist link${result.requeued === 1 ? "" : "s"}.`);
-      } else {
-        alert(`Wiped ${result.wiped} row${result.wiped === 1 ? "" : "s"} and re-queued ${result.queued} artists for link resolution.`);
-      }
-    } finally {
-      setRequeuingLinks(false);
     }
   }
 
@@ -360,9 +347,10 @@ export default function Settings() {
         </p>
         {mediaCache && (
           <div className="rounded-xl border border-border bg-background/40 p-3 space-y-3">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
               <MediaCacheStat label="Album cover art" status={mediaCache.cover_art.status} />
               <MediaCacheStat label="Artist images" status={mediaCache.artist_images.status} />
+              <MediaCacheStat label="Artist links" status={mediaCache.artist_links.status} />
             </div>
             <div className="flex items-center gap-2 flex-wrap pt-1">
               <Button size="sm" variant="outline" onClick={() => requeueMediaCache("missing")} disabled={requeuingMedia}>
@@ -373,8 +361,9 @@ export default function Settings() {
               </Button>
             </div>
             <p className="text-[11px] text-muted-foreground">
-              Tip: server logs (<code>[artist-image]</code>, <code>[coverart]</code>) show what each lookup
-              returned per artist/album.
+              Tip: server logs (<code>[artist-image]</code>, <code>[coverart]</code>, <code>[artist-links]</code>)
+              show what each lookup returned. Artist links re-seed from the artist-image MBID cache,
+              so on a full wipe links are captured first before the image cache is cleared.
             </p>
           </div>
         )}
@@ -389,57 +378,6 @@ export default function Settings() {
               ))}
             </ul>
           </details>
-        )}
-      </Section>
-
-      <Section title="Artist links cache">
-        <p className="text-xs text-muted-foreground">
-          External links on the artist page (Spotify, YouTube, Discogs, Wikipedia, socials...) come from
-          MusicBrainz <code>url-rels</code>. Resolver runs at 1 artist / 30s, only for artists whose MBID
-          is already cached by the artist-image resolver.
-        </p>
-        {artistLinks && (
-          <div className="rounded-xl border border-border bg-background/40 p-3 space-y-2">
-            <div className="flex items-center gap-4 text-xs flex-wrap">
-              <span>
-                <span className="font-medium text-foreground tabular-nums">{artistLinks.status.resolved ?? 0}</span>
-                <span className="ml-1 text-muted-foreground">resolved</span>
-              </span>
-              <span>
-                <span className="font-medium text-foreground tabular-nums">{artistLinks.status.missing ?? 0}</span>
-                <span className="ml-1 text-muted-foreground">missing</span>
-              </span>
-              <span>
-                <span className="font-medium text-foreground tabular-nums">{artistLinks.status.pending ?? 0}</span>
-                <span className="ml-1 text-muted-foreground">pending</span>
-              </span>
-              <Button size="sm" variant="outline" onClick={() => requeueArtistLinks("missing")} disabled={requeuingLinks}>
-                {requeuingLinks ? "Requeuing…" : "Retry missing"}
-              </Button>
-              <Button size="sm" variant="outline" onClick={() => requeueArtistLinks("all")} disabled={requeuingLinks}>
-                {requeuingLinks ? "…" : "Wipe + re-seed all"}
-              </Button>
-            </div>
-            {artistLinks.recent_missing.length > 0 && (
-              <details>
-                <summary className="text-xs text-muted-foreground cursor-pointer hover:text-foreground">
-                  Show {artistLinks.recent_missing.length} most recent missing artists
-                </summary>
-                <ul className="mt-2 max-h-48 overflow-auto text-[11px] text-muted-foreground font-mono space-y-0.5">
-                  {artistLinks.recent_missing.map((m) => (
-                    <li key={m.mb_artist_id}>
-                      {m.artist_name ?? m.mb_artist_id}
-                    </li>
-                  ))}
-                </ul>
-              </details>
-            )}
-            <p className="text-[11px] text-muted-foreground">
-              Tip: server logs (<code>[artist-links] &lt;mbid&gt; → N relations → M kept</code>)
-              show what MB returned per resolve. "Wipe + re-seed all" pulls every MBID already in
-              artist_images, so the resolver works through them at 1/30s without you having to visit each page.
-            </p>
-          </div>
         )}
       </Section>
 

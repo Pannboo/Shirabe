@@ -109,26 +109,33 @@ settingsRouter.post("/artist-links/requeue", (req, res) => {
   res.json({ mode: "missing_only", requeued });
 });
 
-// === Unified media cache (album cover art + artist images) ===============
+// === Unified media cache (cover art + artist images + artist links) ======
 //
-// Single panel in Settings drives both caches at once. Keeps the per-cache
-// endpoints (artist-images/*) for backwards compat and edge cases, but the
-// UI uses these aggregated routes so a "Wipe + re-seed all" rebuilds both
-// in one click.
+// Single panel in Settings drives all three caches at once. Keeps the
+// per-cache endpoints (artist-images/*, artist-links/*) for backwards
+// compat and edge cases, but the UI uses these aggregated routes so a
+// "Wipe + re-seed all" rebuilds everything in one click.
 
 settingsRouter.get("/media-cache", (_req, res) => {
   res.json({
     cover_art: coverartStats(),
     artist_images: artistImageStats(),
+    artist_links: artistLinksStats(),
   });
 });
 
 settingsRouter.post("/media-cache/requeue", (req, res) => {
   const userId = req.user!.user_id;
   if (req.query.all === "true") {
-    // Re-seed both from scrobble history. For artist_images we pull the
-    // distinct artist list from scrobbles ourselves (the helper takes a
-    // list); coverart's reseed talks to the scrobbles table directly.
+    // Order matters. reseedArtistLinks reads its MBID seed list from
+    // artist_images, so capture that BEFORE we wipe artist_images.
+    // Otherwise the link reseed sees an empty source table and ends up
+    // with zero pending rows.
+    const al = reseedArtistLinks();
+
+    // Then the other two re-seed from scrobble history. For artist_images
+    // we pull the distinct artist list from scrobbles ourselves (the
+    // helper takes a list); coverart's reseed talks to scrobbles directly.
     const artists = (db.prepare(`SELECT DISTINCT artist FROM scrobbles WHERE user_id = ?`)
       .all(userId) as { artist: string }[])
       .map((r) => r.artist);
@@ -138,15 +145,18 @@ settingsRouter.post("/media-cache/requeue", (req, res) => {
       mode: "reseed",
       cover_art: cover,
       artist_images: ai,
+      artist_links: al,
     });
     return;
   }
   const cover = requeueAllMissingCoverart();
   const ai = requeueAllMissingArtistImages();
+  const al = requeueAllMissingArtistLinks();
   res.json({
     mode: "missing_only",
     cover_art: { requeued: cover },
     artist_images: { requeued: ai },
+    artist_links: { requeued: al },
   });
 });
 
