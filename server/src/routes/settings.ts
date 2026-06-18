@@ -172,11 +172,16 @@ settingsRouter.post("/media-cache/requeue", (req, res) => {
 
 settingsRouter.get("/scraper-debug", async (req, res) => {
   const source = String(req.query.source ?? "");
-  const limit = Math.min(Math.max(Number(req.query.limit) || 4000, 500), 100_000);
+  // Default bumped to 20KB so RYM's chart pages (typically 500KB+) give us
+  // enough of the body to actually find the album-row markup. RYM puts a
+  // lot of nav/header chrome before the first chart entry.
+  const limit = Math.min(Math.max(Number(req.query.limit) || 20_000, 500), 200_000);
   const year = new Date().getUTCFullYear();
   const targets: Record<string, string> = {
     aoty: `https://www.albumoftheyear.org/must-hear/${year}/`,
     rym: `https://rateyourmusic.com/charts/top/album/year/${year}/`,
+    rym_charts: "https://rateyourmusic.com/charts/",
+    rym_new_music: "https://rateyourmusic.com/new-music/",
     stereogum_aotw: "https://www.stereogum.com/category/album-of-the-week/feed/",
     stereogum_premature: "https://www.stereogum.com/category/premature-evaluation/feed/",
     npr: "https://feeds.npr.org/1039/rss.xml",
