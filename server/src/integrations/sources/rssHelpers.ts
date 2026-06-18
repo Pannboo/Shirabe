@@ -37,6 +37,18 @@ export function parseRssItems(xml: string): RssItem[] {
   return items;
 }
 
+// Trims an HTML/RSS document into a short preview suitable for log lines.
+// Skips down past <head> to give a more useful snippet of the actual
+// content, and collapses whitespace so the log entry doesn't sprawl.
+export function htmlPreview(doc: string, len = 500): string {
+  const bodyIdx = doc.toLowerCase().indexOf("<body");
+  const trimmed = bodyIdx > 0 ? doc.slice(bodyIdx) : doc;
+  return trimmed
+    .slice(0, len * 4)            // pull enough raw chars to survive whitespace collapse
+    .replace(/\s+/g, " ")
+    .slice(0, len);
+}
+
 // Fetches an RSS URL with a 10-second timeout. Returns null on any error
 // (network, non-2xx, abort) so callers can fall through to alternates.
 export async function fetchRss(url: string, label = "rss"): Promise<string | null> {

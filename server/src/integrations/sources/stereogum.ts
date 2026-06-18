@@ -69,6 +69,14 @@ export const stereogumSource: Source = {
         });
       }
       console.log(`[stereogum/${feed.label}] parsed ${parsedCount}/${items.length} items`);
+      // When the title regex matches 0 items, dump a sample so we can see
+      // what the actual title format looks like and update the parser.
+      if (parsedCount === 0 && items.length > 0) {
+        const sample = items.slice(0, 3).map((it) => `  - ${it.title}`).join("\n");
+        console.warn(
+          `[stereogum/${feed.label}] no titles matched parser. Sample titles:\n${sample}`,
+        );
+      }
     }
     return seeds;
   },

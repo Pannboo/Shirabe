@@ -160,6 +160,62 @@ settingsRouter.post("/media-cache/requeue", (req, res) => {
   });
 });
 
+// === Scraper debug =======================================================
+//
+// Fetches a scraper source URL with browser-like headers and returns the
+// raw response so the operator can see what HTML actually came back when
+// a parser produced 0 rows. Bypasses FlareSolverr — useful for figuring
+// out which sources need the proxy vs which just need a parser fix.
+//
+// curl -H "Authorization: Bearer <token>" \
+//   'http://shirabe:3000/api/settings/scraper-debug?source=aoty'
+
+settingsRouter.get("/scraper-debug", async (req, res) => {
+  const source = String(req.query.source ?? "");
+  const limit = Math.min(Math.max(Number(req.query.limit) || 4000, 500), 100_000);
+  const year = new Date().getUTCFullYear();
+  const targets: Record<string, string> = {
+    aoty: `https://www.albumoftheyear.org/ratings/critic-highest-rated/${year}/1/`,
+    rym: `https://rateyourmusic.com/charts/top/album/year/${year}/`,
+    stereogum_aotw: "https://www.stereogum.com/category/album-of-the-week/feed/",
+    stereogum_premature: "https://www.stereogum.com/category/premature-evaluation/feed/",
+    npr: "https://feeds.npr.org/1039/rss.xml",
+  };
+  const url = targets[source];
+  if (!url) {
+    res.status(400).json({
+      error: "unknown_source",
+      available: Object.keys(targets),
+    });
+    return;
+  }
+  const browserHeaders: Record<string, string> = {
+    "User-Agent":
+      "Mozilla/5.0 (X11; Linux x86_64; rv:128.0) Gecko/20100101 Firefox/128.0",
+    Accept:
+      "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.5",
+  };
+  try {
+    const r = await fetch(url, { headers: browserHeaders });
+    const text = await r.text();
+    res.json({
+      source,
+      url,
+      status: r.status,
+      content_type: r.headers.get("content-type"),
+      content_length: text.length,
+      preview: text.slice(0, limit),
+    });
+  } catch (err) {
+    res.status(502).json({
+      source,
+      url,
+      error: err instanceof Error ? err.message : "unknown",
+    });
+  }
+});
+
 // === Scrobble history import =============================================
 
 settingsRouter.get("/import/status", (req, res) => {

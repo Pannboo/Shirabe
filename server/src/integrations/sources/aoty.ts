@@ -1,5 +1,6 @@
 import type { RawSeed, Source } from "./index.js";
 import { fetchViaFlareSolverr, flaresolverrConfigured } from "../flaresolverr.js";
+import { htmlPreview } from "./rssHelpers.js";
 
 // ============================================================================
 // AlbumOfTheYear scraper
@@ -165,7 +166,8 @@ async function fetchChart(): Promise<RawSeed[]> {
   if (entries.length === 0) {
     console.warn(
       `[aoty] no-matches — fetched ${html.length} bytes but parsed 0 rows. ` +
-      `HTML layout may have changed; check sources/aoty.ts parseChart().`,
+      `HTML layout may have changed. First 500 chars after <body> for diagnosis:\n` +
+      htmlPreview(html),
     );
     return [];
   }

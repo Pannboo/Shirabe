@@ -55,6 +55,10 @@ export const nprSource: Source = {
       });
     }
     console.log(`[npr] parsed ${seeds.length}/${items.length} items`);
+    if (seeds.length === 0 && items.length > 0) {
+      const sample = items.slice(0, 5).map((it) => `  - ${it.title}`).join("\n");
+      console.warn(`[npr] no titles matched parser. Sample titles:\n${sample}`);
+    }
     return seeds;
   },
 };

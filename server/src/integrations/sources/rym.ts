@@ -1,5 +1,6 @@
 import type { RawSeed, Source } from "./index.js";
 import { fetchViaFlareSolverr, flaresolverrConfigured } from "../flaresolverr.js";
+import { htmlPreview } from "./rssHelpers.js";
 
 // ============================================================================
 // RateYourMusic scraper
@@ -173,7 +174,8 @@ async function fetchChart(): Promise<RawSeed[]> {
   if (entries.length === 0) {
     console.warn(
       `[rym] no-matches — fetched ${html.length} bytes from RYM but parsed 0 album entries. ` +
-      `HTML structure may have changed; check sources/rym.ts parseChart().`,
+      `HTML structure may have changed. First 500 chars after <body> for diagnosis:\n` +
+      htmlPreview(html),
     );
     return [];
   }
