@@ -12,6 +12,7 @@ const DEFAULTS: AppSettings = {
   lastfm_api_key: "",
   lastfm_shared_secret: "",
   lastfm_username: "",
+  lastfm_pending_token: "",
   lastfm_session_key: "",
   lastfm_session_username: "",
   listenbrainz_username: "",

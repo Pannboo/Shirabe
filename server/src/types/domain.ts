@@ -91,6 +91,10 @@ export interface AppSettings {
   lastfm_api_key: string;
   lastfm_shared_secret: string;
   lastfm_username: string;
+  // Short-lived request token returned by Last.fm auth.getToken, persisted
+  // while the user authorises in the popup so a server restart mid-OAuth
+  // doesn't lose the in-flight exchange. Cleared when consumed or aborted.
+  lastfm_pending_token: string;
   lastfm_session_key: string;
   lastfm_session_username: string;
   listenbrainz_username: string;

@@ -5,7 +5,11 @@ const tasks = new Map<string, ScheduledTask>();
 export function registerCron(
   name: string,
   schedule: string,
-  fn: () => Promise<void> | void,
+  // Widened from Promise<void> | void so jobs that return a result object
+  // (pullSuggestions → PullResult, syncNavidromeLibrary → { albums })
+  // satisfy this signature. The return value is discarded — cron only
+  // cares that the callback runs.
+  fn: () => Promise<unknown> | unknown,
 ): void {
   const existing = tasks.get(name);
   if (existing) existing.stop();
