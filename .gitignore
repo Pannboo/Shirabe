@@ -1,0 +1,12 @@
+node_modules
+dist
+build
+.env
+.env.local
+*.log
+data/
+downloads/
+music/
+server/src/static/
+client/dist/
+.DS_Store

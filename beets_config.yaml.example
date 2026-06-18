@@ -1,0 +1,24 @@
+directory: /music
+library: /data/beets-library.db
+
+import:
+  copy: yes
+  write: yes
+  move: no
+  resume: ask
+  incremental: no
+  quiet_fallback: skip
+  timid: yes
+
+match:
+  strong_rec_thresh: 0.04
+  medium_rec_thresh: 0.25
+
+plugins: fetchart embedart lastgenre
+
+fetchart:
+  auto: yes
+  sources: coverart itunes amazon albumart
+
+lastgenre:
+  auto: yes

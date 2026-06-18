@@ -1,0 +1,104 @@
+# Shirabe + slskd + navidrome + flaresolverr stack.
+#
+# Volumes that MUST be shared across services:
+#   ./downloads   — slskd ↔ shirabe (slskd drops files here, shirabe organises them)
+#   ./music       — shirabe ↔ navidrome (shirabe writes here via beets, navidrome scans)
+#
+# First-time setup:
+#   cp .env.example .env
+#   edit SECRET_KEY (openssl rand -hex 48)
+#   optionally fill in any BOOT_* vars for first-run seeding
+#   docker compose up -d --build
+#
+# After deploy: visit http://<host>:3000, log in with your Navidrome
+# credentials (admin user becomes the Shirabe admin), then walk through
+# Settings to fill in any integrations you didn't seed via BOOT_*.
+
+services:
+  shirabe:
+    build:
+      context: .
+      dockerfile: server/Dockerfile
+    container_name: shirabe
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      SECRET_KEY: ${SECRET_KEY:?set SECRET_KEY in .env}
+      DATABASE_URL: /data/shirabe.db
+      PORT: "3000"
+      NAVIDROME_URL: http://navidrome:4533
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-}
+      BEETS_BIN: beet
+      BEETS_CONFIG: /etc/beets/config.yaml
+      DOWNLOADS_DIR: /downloads
+      MUSIC_DIR: /music
+      # Optional first-run seeding (only takes effect when the settings
+      # table is empty). Set any of these in .env to skip the manual
+      # Settings walkthrough on a fresh deploy.
+      BOOT_LASTFM_API_KEY: ${BOOT_LASTFM_API_KEY:-}
+      BOOT_LASTFM_SHARED_SECRET: ${BOOT_LASTFM_SHARED_SECRET:-}
+      BOOT_LASTFM_USERNAME: ${BOOT_LASTFM_USERNAME:-}
+      BOOT_LISTENBRAINZ_USERNAME: ${BOOT_LISTENBRAINZ_USERNAME:-}
+      BOOT_LISTENBRAINZ_TOKEN: ${BOOT_LISTENBRAINZ_TOKEN:-}
+      BOOT_SLSKD_URL: ${BOOT_SLSKD_URL:-http://slskd:5030}
+      BOOT_SLSKD_API_KEY: ${BOOT_SLSKD_API_KEY:-}
+      BOOT_NAVIDROME_URL: ${BOOT_NAVIDROME_URL:-http://navidrome:4533}
+      BOOT_NAVIDROME_USERNAME: ${BOOT_NAVIDROME_USERNAME:-}
+      BOOT_NAVIDROME_PASSWORD: ${BOOT_NAVIDROME_PASSWORD:-}
+      BOOT_RELAY_LASTFM: ${BOOT_RELAY_LASTFM:-}
+      BOOT_RELAY_LISTENBRAINZ: ${BOOT_RELAY_LISTENBRAINZ:-}
+      BOOT_SUGGESTION_SCHEDULE: ${BOOT_SUGGESTION_SCHEDULE:-}
+      BOOT_DISMISS_COOLDOWN_DAYS: ${BOOT_DISMISS_COOLDOWN_DAYS:-}
+    volumes:
+      - ./data:/data
+      - ./downloads:/downloads        # shared with slskd
+      - ./music:/music                # shared with navidrome
+      - ./beets_config.yaml:/etc/beets/config.yaml:ro
+    depends_on:
+      - slskd
+      - navidrome
+      - flaresolverr
+
+  # FlareSolverr: headless-browser proxy that resolves Cloudflare challenge
+  # pages. Required for RYM/AOTY scraper sources to work reliably. After
+  # boot, paste `http://flaresolverr:8191/v1` into Shirabe → Settings →
+  # Cloudflare bypass.
+  flaresolverr:
+    image: ghcr.io/flaresolverr/flaresolverr:latest
+    container_name: flaresolverr
+    restart: unless-stopped
+    environment:
+      LOG_LEVEL: info
+      LOG_HTML: "false"
+      CAPTCHA_SOLVER: none
+      TZ: ${TZ:-UTC}
+    # No port exposure needed — Shirabe reaches it via the internal docker network.
+
+  # Replace with your existing slskd config. Shirabe needs /downloads shared with this service.
+  slskd:
+    image: slskd/slskd:latest
+    container_name: slskd
+    restart: unless-stopped
+    ports:
+      - "5030:5030"
+      - "50300:50300"
+    environment:
+      SLSKD_REMOTE_CONFIGURATION: "true"
+    volumes:
+      - ./slskd:/app
+      - ./downloads:/downloads        # MUST be the same host path as shirabe
+
+  # Replace with your existing navidrome config. Shirabe needs /music shared with this service.
+  navidrome:
+    image: deluan/navidrome:latest
+    container_name: navidrome
+    restart: unless-stopped
+    ports:
+      - "4533:4533"
+    environment:
+      ND_LOGLEVEL: info
+      ND_SCANSCHEDULE: 1h
+    volumes:
+      - ./navidrome:/data
+      - ./music:/music                # MUST be the same host path as shirabe

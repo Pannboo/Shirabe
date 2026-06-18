@@ -1,0 +1,103 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root,
+  .light {
+    --background: 32 10% 96%;
+    --foreground: 30 6% 14%;
+    --card: 32 10% 99%;
+    --card-foreground: 30 6% 14%;
+    --muted: 30 6% 90%;
+    --muted-foreground: 30 5% 42%;
+    --accent: 320 70% 52%;
+    --accent-foreground: 0 0% 100%;
+    --primary: 280 70% 50%;
+    --primary-foreground: 0 0% 100%;
+    --destructive: 0 75% 50%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 30 6% 86%;
+    --input: 30 5% 92%;
+    --ring: 280 70% 50%;
+    --radius: 0.875rem;
+  }
+
+  .dark {
+    /* Warm-leaning charcoal — slight hint of ink-on-paper at the dark end
+       of the scale rather than a cool grey. Lower contrast than the
+       previous palette so cards melt into the page instead of looking
+       framed. */
+    --background: 30 6% 6%;
+    --foreground: 32 8% 95%;
+    --card: 30 6% 9%;
+    --card-foreground: 32 8% 95%;
+    --muted: 30 5% 14%;
+    --muted-foreground: 30 5% 60%;
+    /* Magenta/rose signature accent — distinct from Koito's teal. */
+    --accent: 322 80% 60%;
+    --accent-foreground: 0 0% 100%;
+    --primary: 282 75% 62%;
+    --primary-foreground: 0 0% 100%;
+    --destructive: 0 80% 58%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 30 6% 14%;
+    --input: 30 5% 14%;
+    --ring: 282 75% 62%;
+    --radius: 0.875rem;
+  }
+
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    background-color: hsl(var(--background));
+    color: hsl(var(--foreground));
+  }
+
+  .tabular-nums {
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+@layer components {
+  /* Small uppercase label sitting above a hero element ("ARTIST", "ALBUM"). */
+  .eyebrow {
+    @apply text-[10px] font-semibold uppercase tracking-[0.22em] text-muted-foreground;
+  }
+
+  /* Section header for "TOP TRACKS", "LAST PLAYED" etc. — same tracking as
+     eyebrow but with a hairline divider underneath, which lets us drop the
+     card wrappers and still get clear section boundaries. */
+  .section-title {
+    @apply text-[11px] font-semibold uppercase tracking-[0.22em] text-muted-foreground mb-4 pb-2 border-b border-border/50;
+  }
+
+  .hairline {
+    @apply border-b border-border/40;
+  }
+}
+
+@layer utilities {
+  .hero-mask {
+    background: linear-gradient(
+      to top,
+      hsl(var(--card) / 0.95) 0%,
+      hsl(var(--card) / 0.55) 38%,
+      transparent 75%
+    );
+  }
+
+  @keyframes shirabe-pulse {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.55; transform: scale(0.85); }
+  }
+  .live-pulse {
+    animation: shirabe-pulse 1.6s ease-in-out infinite;
+  }
+}

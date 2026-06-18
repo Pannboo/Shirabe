@@ -1,0 +1,43 @@
+# Build artefacts and dev-only dirs — keep the docker build context lean and
+# avoid leaking the bind-mounted runtime state into the image.
+
+# Dependencies (installed fresh inside the build stage)
+node_modules
+**/node_modules
+
+# Build outputs (rebuilt inside the image)
+client/dist
+server/dist
+server/src/static
+
+# Runtime state from a previous compose run on the dev box
+data
+downloads
+music
+slskd
+navidrome
+
+# Environment + secrets — pulled at runtime via compose, never baked in
+.env
+.env.*
+!.env.example
+
+# Source-control + editor cruft
+.git
+.gitignore
+.gitattributes
+.github
+.vscode
+.idea
+*.swp
+.DS_Store
+
+# Logs + coverage
+*.log
+npm-debug.log*
+coverage
+
+# Local plans / notes that shouldn't ship in the image
+*.md.bak
+QUESTIONS.md
+musicurator-claude-code-prompt.md
