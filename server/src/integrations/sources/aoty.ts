@@ -6,39 +6,54 @@ import { htmlPreview } from "./rssHelpers.js";
 // AlbumOfTheYear scraper
 // ============================================================================
 //
-// Selectors and decoding patterns adapted from edideaur/AOTY-api
-// (https://github.com/edideaur/AOTY-api) which maintains a working
-// Cloudflare-Worker-based AOTY scraper. Their HTMLRewriter selectors are
-// the source-of-truth for what the live HTML actually looks like —
-// translated here to regex form since we don't have a streaming HTML
-// parser server-side. Credit in the README.
+// Faithful port of edideaur/AOTY-api (https://github.com/edideaur/AOTY-api),
+// which maintains a working AOTY scraper as a Cloudflare Worker. Credited
+// in the README.
 //
-// AOTY uses two distinct chart layouts:
-//   - List pages (/ratings/critic-highest-rated/, /list/...)
-//       → .albumListRow containing .albumListTitle a[itemprop='url']
-//   - Discover/release pages (/releases/, /discover/...)
-//       → .albumBlock with .artistTitle and .albumTitle children
+// Endpoint: /must-hear/{year}/ — AOTY's curated "essential albums" list
+// for the year. High-signal: the editorial team picks ~25-50 per year,
+// with active curation. Matches the same scraper AOTY-api uses for
+// /must-hear, /discover, /releases — all album-block layout.
 //
-// We default to the list page but parse both shapes — saves us a refetch
-// if AOTY's HTML structure shifts under us.
+// URL choice rationale:
+//   - /ratings/critic-highest-rated/... is NOT a real AOTY path (AOTY
+//     uses /ratings/6-highest-rated/... internally), which is why the
+//     original implementation got back the homepage shell with no rows.
+//   - /must-hear/{year}/ is a documented AOTY-api endpoint and uses the
+//     clean .albumBlock structure with .artistTitle + .albumTitle.
+//   - /discover/ would also work but is broader/less curated.
+//
+// Selectors copied verbatim from AOTY-api's scrapers/albumBlock.ts:
+//   .albumBlock > .artistTitle    → artist name
+//   .albumBlock > .albumTitle     → album title
+//   .albumBlock > .image a        → album page URL
+//   .albumBlock > .image img      → cover URL
+//
+// HTMLRewriter (their parser) is streaming; we use regex since we're not
+// on a Cloudflare Worker. Equivalent output.
 // ============================================================================
 
 const CHART_URL = (() => {
   const year = new Date().getUTCFullYear();
-  return `https://www.albumoftheyear.org/ratings/critic-highest-rated/${year}/1/`;
+  return `https://www.albumoftheyear.org/must-hear/${year}/`;
 })();
 
-const SCORE = 0.72;
+const SCORE = 0.78;
 
 let cache: { fetchedAt: number; seeds: RawSeed[] } | null = null;
 const CACHE_TTL_MS = 24 * 60 * 60_000;
 
+// User-Agent matches AOTY-api's FETCH_OPTS (Chrome on Windows). Real
+// browser strings reduce friction with AOTY's bot detection — though
+// the page is generally fetchable without Cloudflare bypass.
 const BROWSER_HEADERS: Record<string, string> = {
   "User-Agent":
-    "Mozilla/5.0 (X11; Linux x86_64; rv:128.0) Gecko/20100101 Firefox/128.0",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
+    "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
   Accept:
-    "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-  "Accept-Language": "en-US,en;q=0.5",
+    "text/html,application/xhtml+xml,application/xml;q=0.9," +
+    "image/avif,image/webp,*/*;q=0.8",
+  "Accept-Language": "en-US,en;q=0.9",
   "Accept-Encoding": "gzip, deflate",
   Connection: "keep-alive",
   "Upgrade-Insecure-Requests": "1",
@@ -49,82 +64,42 @@ interface ChartEntry {
   title: string;
 }
 
-// HTML entity decoder — mirrors AOTY-api's decodeEntities helper. Covers
-// the entities AOTY's pages actually use (numeric, named common, smart
-// punctuation passed through from CMS).
-function decodeEntities(s: string): string {
-  return s
-    .replace(/&amp;/g, "&")
+// Direct port of AOTY-api's decodeEntities helper (constants.ts).
+function decodeEntities(str: string): string {
+  return str
+    .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(+n))
+    .replace(/&#x([0-9a-f]+);/gi, (_, h) => String.fromCharCode(parseInt(h, 16)))
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
     .replace(/&lt;/g, "<")
     .replace(/&gt;/g, ">")
-    .replace(/&quot;/g, '"')
-    .replace(/&#039;/g, "'")
-    .replace(/&#39;/g, "'")
-    .replace(/&apos;/g, "'")
     .replace(/&nbsp;/g, " ")
-    .replace(/&#x27;/g, "'")
-    .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n)))
-    .replace(/&#x([0-9a-f]+);/gi, (_, n) => String.fromCharCode(parseInt(n, 16)));
+    .replace(/&amp;/g, "&");
 }
 
-// Strip any nested tags out of a cell's inner HTML, decode entities,
-// collapse whitespace. Mirrors what HTMLRewriter would emit as text().
+// Strip nested tags from inner HTML, decode entities, collapse whitespace.
+// Equivalent to what HTMLRewriter's text() emits, concatenated.
 function textOf(cellHtml: string): string {
-  return decodeEntities(cellHtml.replace(/<[^>]+>/g, " ")).replace(/\s+/g, " ").trim();
+  return decodeEntities(cellHtml.replace(/<[^>]+>/g, " "))
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
-// === List-page parser ======================================================
-//
-// Matches AOTY-api's lists.ts shape:
-//   <div class="albumListRow ...">
-//     <div class="albumListImage">...</div>
-//     <div class="albumListTitle">
-//       <a itemprop="url" href="/album/...">Artist Name - Album Title</a>
-//     </div>
-//     <div class="albumListGenre">...</div>
-//   </div>
-//
-// The anchor text is "Artist Name - Album Title" on these list pages.
-// (The discover-block format splits artist + title into separate
-// elements; the list format concatenates them.)
-function parseListRows(html: string): ChartEntry[] {
-  const entries: ChartEntry[] = [];
-  const rowRe = /<div[^>]*class="[^"]*albumListRow[^"]*"[^>]*>([\s\S]*?)<\/div>\s*<\/div>/g;
-  let m: RegExpExecArray | null;
-  while ((m = rowRe.exec(html)) !== null) {
-    const row = m[1] ?? "";
-    // Find the .albumListTitle block's first anchor.
-    const titleMatch = row.match(
-      /<div[^>]*class="[^"]*albumListTitle[^"]*"[^>]*>[\s\S]*?<a[^>]*itemprop=["']url["'][^>]*>([\s\S]*?)<\/a>/i,
-    );
-    if (!titleMatch?.[1]) continue;
-    const text = textOf(titleMatch[1]);
-    // Split on the first " - " (AOTY list-page convention).
-    const dashIdx = text.indexOf(" - ");
-    if (dashIdx <= 0) continue;
-    const artist = text.slice(0, dashIdx).trim();
-    const title = text.slice(dashIdx + 3).trim();
-    if (artist && title) entries.push({ artist, title });
-  }
-  return entries;
-}
-
-// === Discover/release-block parser =========================================
-//
-// Matches AOTY-api's albumBlock.ts shape. Used when the page is a
-// "discover" layout rather than a chart list:
-//
-//   <div class="albumBlock" data-type="LP">
-//     <div class="image"><a href="/album/...">...</a></div>
-//     <div class="artistTitle">Artist Name</div>
-//     <div class="albumTitle">Album Title</div>
-//     ...
-//   </div>
+// Port of AOTY-api's scrapeAlbumBlocks (scrapers/albumBlock.ts).
+// On their side it's a streaming HTMLRewriter; here it's regex over the
+// full HTML. Either way the selectors are .albumBlock > .artistTitle and
+// .albumBlock > .albumTitle.
 function parseAlbumBlocks(html: string): ChartEntry[] {
   const entries: ChartEntry[] = [];
-  const blockRe = /<div[^>]*class="[^"]*albumBlock[^"]*"[^>]*>([\s\S]*?)<\/div>\s*<\/div>/g;
-  const artistRe = /<div[^>]*class="[^"]*artistTitle[^"]*"[^>]*>([\s\S]*?)<\/div>/i;
-  const titleRe = /<div[^>]*class="[^"]*albumTitle[^"]*"[^>]*>([\s\S]*?)<\/div>/i;
+  // Match each .albumBlock container. AOTY uses a non-greedy capture
+  // bounded by the next .albumBlock or end-of-document — but the
+  // simpler "block until two closing divs" pattern handles typical
+  // AOTY markup (the block ends with </div></div> for its content +
+  // wrapper).
+  const blockRe = /<div[^>]*class="[^"]*\balbumBlock\b[^"]*"[^>]*>([\s\S]*?)(?=<div[^>]*class="[^"]*\balbumBlock\b|<\/body>)/g;
+  const artistRe = /<div[^>]*class="[^"]*\bartistTitle\b[^"]*"[^>]*>([\s\S]*?)<\/div>/i;
+  const titleRe = /<div[^>]*class="[^"]*\balbumTitle\b[^"]*"[^>]*>([\s\S]*?)<\/div>/i;
+
   let m: RegExpExecArray | null;
   while ((m = blockRe.exec(html)) !== null) {
     const block = m[1] ?? "";
@@ -136,14 +111,6 @@ function parseAlbumBlocks(html: string): ChartEntry[] {
     if (artist && title) entries.push({ artist, title });
   }
   return entries;
-}
-
-function parseChart(html: string): ChartEntry[] {
-  // Try the list-row layout first (matches the chart URL we hit), fall
-  // back to the discover-block layout if AOTY has changed the page type.
-  const list = parseListRows(html);
-  if (list.length > 0) return list;
-  return parseAlbumBlocks(html);
 }
 
 function looksLikeChallenge(html: string): boolean {
@@ -159,7 +126,6 @@ function looksLikeChallenge(html: string): boolean {
 async function fetchChart(): Promise<RawSeed[]> {
   let html: string | null = null;
 
-  // Prefer FlareSolverr when configured.
   if (flaresolverrConfigured()) {
     html = await fetchViaFlareSolverr(CHART_URL, "aoty/flaresolverr");
   }
@@ -192,18 +158,20 @@ async function fetchChart(): Promise<RawSeed[]> {
     return [];
   }
 
-  const entries = parseChart(html);
+  const entries = parseAlbumBlocks(html);
   if (entries.length === 0) {
     console.warn(
-      `[aoty] no-matches — fetched ${html.length} bytes but parsed 0 rows. ` +
-      `HTML layout may have changed (selectors based on edideaur/AOTY-api). ` +
-      `First 2000 chars of <body> (scripts/styles stripped) for diagnosis:\n` +
+      `[aoty] no-matches — fetched ${html.length} bytes from ${CHART_URL} ` +
+      `but parsed 0 .albumBlock rows. AOTY may have changed their markup ` +
+      `(selectors are a direct port of edideaur/AOTY-api). First 2000 chars ` +
+      `of <body> (scripts/styles stripped) for diagnosis:\n` +
       htmlPreview(html),
     );
     return [];
   }
 
-  return entries.slice(0, 25).map<RawSeed>((e) => ({
+  const year = new Date().getUTCFullYear();
+  return entries.slice(0, 30).map<RawSeed>((e) => ({
     source: "albumoftheyear",
     artist: e.artist,
     title: e.title,
@@ -211,7 +179,7 @@ async function fetchChart(): Promise<RawSeed[]> {
     artist_mbid: null,
     mode: "album",
     score: SCORE,
-    reason: "Highest-rated by critics this year on AOTY",
+    reason: `Must-hear album of ${year} on AlbumOfTheYear`,
   }));
 }
 

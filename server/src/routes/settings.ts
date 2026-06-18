@@ -175,7 +175,7 @@ settingsRouter.get("/scraper-debug", async (req, res) => {
   const limit = Math.min(Math.max(Number(req.query.limit) || 4000, 500), 100_000);
   const year = new Date().getUTCFullYear();
   const targets: Record<string, string> = {
-    aoty: `https://www.albumoftheyear.org/ratings/critic-highest-rated/${year}/1/`,
+    aoty: `https://www.albumoftheyear.org/must-hear/${year}/`,
     rym: `https://rateyourmusic.com/charts/top/album/year/${year}/`,
     stereogum_aotw: "https://www.stereogum.com/category/album-of-the-week/feed/",
     stereogum_premature: "https://www.stereogum.com/category/premature-evaluation/feed/",
