@@ -34,8 +34,10 @@ COPY --from=build /app/package.json /app/package-lock.json* ./
 COPY --from=build /app/server/package.json server/
 COPY --from=build /app/server/dist server/dist
 COPY --from=build /app/server/src/static server/dist/static
+# npm workspaces hoist every dep to the root /app/node_modules — there is
+# no /app/server/node_modules to copy. Node resolves from the root tree
+# because /app/server is nested inside /app.
 COPY --from=build /app/node_modules ./node_modules
-COPY --from=build /app/server/node_modules ./server/node_modules
 
 EXPOSE 3000
 WORKDIR /app/server
