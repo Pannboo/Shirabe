@@ -132,6 +132,74 @@ export async function getLastFmAlbumTracks(artist: string, album: string): Promi
   }));
 }
 
+// === History import =======================================================
+//
+// Paginates user.getRecentTracks across the user's full Last.fm history.
+// Filters out the "now playing" track (which has no listened_at).
+
+interface LfmRecentTrack {
+  name: string;
+  artist: { "#text"?: string; name?: string } | string;
+  album?: { "#text"?: string };
+  date?: { uts?: string };
+  "@attr"?: { nowplaying?: string };
+}
+
+interface LfmRecentTracksResponse {
+  recenttracks?: {
+    "@attr"?: { totalPages?: string; total?: string; page?: string };
+    track?: LfmRecentTrack[];
+  };
+}
+
+export interface LfmHistoryPage {
+  rows: { artist: string; track: string; album: string | null; timestamp: number }[];
+  page: number;
+  total_pages: number;
+  total: number;
+}
+
+function artistName(a: LfmRecentTrack["artist"]): string {
+  if (typeof a === "string") return a;
+  return a["#text"] ?? a.name ?? "";
+}
+
+export async function fetchLastFmHistoryPage(
+  username: string,
+  page: number,
+  perPage = 200,
+): Promise<LfmHistoryPage | null> {
+  const data = await lfmGet<LfmRecentTracksResponse>({
+    method: "user.getrecenttracks",
+    user: username,
+    limit: String(perPage),
+    page: String(page),
+  });
+  if (!data?.recenttracks) return null;
+  const tracks = data.recenttracks.track ?? [];
+  const rows: LfmHistoryPage["rows"] = [];
+  for (const t of tracks) {
+    if (t["@attr"]?.nowplaying === "true") continue;
+    const ts = t.date?.uts ? Number(t.date.uts) : null;
+    if (!ts || !Number.isFinite(ts)) continue;
+    const artist = artistName(t.artist);
+    if (!artist || !t.name) continue;
+    rows.push({
+      artist,
+      track: t.name,
+      album: t.album?.["#text"] || null,
+      timestamp: ts,
+    });
+  }
+  const attr = data.recenttracks["@attr"];
+  return {
+    rows,
+    page,
+    total_pages: Number(attr?.totalPages ?? page),
+    total: Number(attr?.total ?? rows.length),
+  };
+}
+
 // Artist image fallback. Last.fm deprecated the image arrays on
 // `artist.getInfo` in 2019 — they now point at a generic star placeholder.
 // But `artist.search` still returns the real artist photos in its result

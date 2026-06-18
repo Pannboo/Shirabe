@@ -6,6 +6,18 @@ const insert = db.prepare(`
   VALUES (?, ?, ?, ?, ?, ?)
 `);
 
+// Used by the history-import flow. INSERT OR IGNORE so re-runs (or
+// importing the same scrobble from both Last.fm and LB) are idempotent
+// against the uniq_scrobble index. relayed_lastfm / relayed_listenbrainz
+// are set up-front because the imported row already exists on that
+// service — we don't want the relay job to round-trip it back.
+const insertHistorical = db.prepare(`
+  INSERT OR IGNORE INTO scrobbles
+    (user_id, track, artist, album, timestamp, source_client,
+     relayed_lastfm, relayed_listenbrainz)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+`);
+
 const markRelay = {
   lastfm: db.prepare(`UPDATE scrobbles SET relayed_lastfm = 1 WHERE id = ?`),
   listenbrainz: db.prepare(`UPDATE scrobbles SET relayed_listenbrainz = 1 WHERE id = ?`),
@@ -54,4 +66,38 @@ export function getRecentByUser(userId: number, limit: number): Scrobble[] {
 
 export function getLatestByUser(userId: number): Scrobble | undefined {
   return latestByUser.get(userId) as Scrobble | undefined;
+}
+
+export interface HistoricalRow {
+  track: string;
+  artist: string;
+  album: string | null;
+  timestamp: number;
+  source_client: string;
+  relayed_lastfm: boolean;
+  relayed_listenbrainz: boolean;
+}
+
+// Bulk insert wrapped in a single transaction — better-sqlite3 is fastest
+// when many statements share one transaction (~10x). Returns the number
+// of rows actually inserted (the rest were dupes already in the table).
+export function insertHistoricalBatch(userId: number, rows: HistoricalRow[]): number {
+  const tx = db.transaction((batch: HistoricalRow[]) => {
+    let inserted = 0;
+    for (const r of batch) {
+      const result = insertHistorical.run(
+        userId,
+        r.track,
+        r.artist,
+        r.album,
+        r.timestamp,
+        r.source_client,
+        r.relayed_lastfm ? 1 : 0,
+        r.relayed_listenbrainz ? 1 : 0,
+      );
+      if (result.changes > 0) inserted += 1;
+    }
+    return inserted;
+  });
+  return tx(rows);
 }

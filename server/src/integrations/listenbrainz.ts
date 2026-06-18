@@ -119,6 +119,56 @@ export async function getLbArtistImageByMbid(artistMbid: string): Promise<string
   return typeof img === "string" && img.length > 0 ? img : null;
 }
 
+// === History import =======================================================
+//
+// Paginates /user/{username}/listens by max_ts cursor. LB returns up to
+// 1000 listens per page and uses descending timestamp order, so we walk
+// backwards via max_ts until the API returns an empty page or a row
+// older than `min_ts` (when supplied).
+
+interface LbListen {
+  listened_at: number;
+  track_metadata: {
+    artist_name: string;
+    track_name: string;
+    release_name?: string;
+  };
+}
+
+interface LbListensResponse {
+  payload?: {
+    count?: number;
+    listens?: LbListen[];
+  };
+}
+
+export interface LbHistoryPage {
+  rows: { artist: string; track: string; album: string | null; timestamp: number }[];
+  oldest_ts: number | null;
+}
+
+export async function fetchListenBrainzHistoryPage(
+  username: string,
+  maxTs: number | null,
+  count = 1000,
+): Promise<LbHistoryPage | null> {
+  const params = new URLSearchParams({ count: String(count) });
+  if (maxTs !== null) params.set("max_ts", String(maxTs));
+  const data = await lbGet<LbListensResponse>(
+    `/user/${encodeURIComponent(username)}/listens?${params.toString()}`,
+  );
+  if (!data?.payload) return null;
+  const listens = data.payload.listens ?? [];
+  const rows = listens.map((l) => ({
+    artist: l.track_metadata.artist_name,
+    track: l.track_metadata.track_name,
+    album: l.track_metadata.release_name ?? null,
+    timestamp: l.listened_at,
+  }));
+  const oldest = rows.length > 0 ? Math.min(...rows.map((r) => r.timestamp)) : null;
+  return { rows, oldest_ts: oldest };
+}
+
 export async function validateListenBrainzToken(token: string): Promise<{ valid: boolean; user_name?: string }> {
   if (!token) return { valid: false };
   try {

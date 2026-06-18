@@ -8,6 +8,7 @@ import { syncNavidromeLibrary } from "../jobs/syncNavidromeLibrary.js";
 import { libraryAlbumCount, libraryLastSync } from "../db/queries/library.js";
 import { artistImageStats, requeueAllMissingArtistImages, reseedArtistImages } from "../db/queries/artistImages.js";
 import { artistLinksStats, requeueAllMissingArtistLinks, reseedArtistLinks } from "../db/queries/artistLinks.js";
+import { getImportStatus, importLastFmHistory, importListenBrainzHistory } from "../jobs/importHistory.js";
 import { db } from "../db/client.js";
 import { getAdminId } from "../db/queries/users.js";
 
@@ -105,6 +106,27 @@ settingsRouter.post("/artist-links/requeue", (req, res) => {
   }
   const requeued = requeueAllMissingArtistLinks();
   res.json({ mode: "missing_only", requeued });
+});
+
+// === Scrobble history import =============================================
+
+settingsRouter.get("/import/status", (req, res) => {
+  void req;
+  res.json(getImportStatus());
+});
+
+// Fire-and-forget — the route returns immediately; the actual import runs
+// in the background. UI polls /import/status while phase === "running".
+settingsRouter.post("/import/lastfm", (req, res) => {
+  const userId = req.user!.user_id;
+  void importLastFmHistory(userId);
+  res.json({ ok: true });
+});
+
+settingsRouter.post("/import/listenbrainz", (req, res) => {
+  const userId = req.user!.user_id;
+  void importListenBrainzHistory(userId);
+  res.json({ ok: true });
 });
 
 settingsRouter.post("/library/sync", async (_req, res) => {

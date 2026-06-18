@@ -4,7 +4,13 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import SectionTitle from "@/components/SectionTitle";
 import { api } from "@/lib/api";
-import type { AppSettingsDto, ArtistImageStatsResponse, ArtistLinksStatsResponse, LibraryStatusResponse } from "@/lib/dto";
+import type {
+  AppSettingsDto,
+  ArtistImageStatsResponse,
+  ArtistLinksStatsResponse,
+  ImportStatusResponse,
+  LibraryStatusResponse,
+} from "@/lib/dto";
 import { useTheme } from "@/hooks/useTheme";
 import { formatNumber, formatRelative } from "@/lib/format";
 
@@ -13,6 +19,7 @@ export default function Settings() {
   const [library, setLibrary] = useState<LibraryStatusResponse | null>(null);
   const [artistImages, setArtistImages] = useState<ArtistImageStatsResponse | null>(null);
   const [artistLinks, setArtistLinks] = useState<ArtistLinksStatsResponse | null>(null);
+  const [importStatus, setImportStatus] = useState<ImportStatusResponse | null>(null);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [syncing, setSyncing] = useState(false);
@@ -25,7 +32,36 @@ export default function Settings() {
     api<LibraryStatusResponse>("/api/settings/library").then(setLibrary).catch(() => {});
     api<ArtistImageStatsResponse>("/api/settings/artist-images").then(setArtistImages).catch(() => {});
     api<ArtistLinksStatsResponse>("/api/settings/artist-links").then(setArtistLinks).catch(() => {});
+    api<ImportStatusResponse>("/api/settings/import/status").then(setImportStatus).catch(() => {});
   }, []);
+
+  // Poll the import status fast (2s) while either job is running, slow
+  // (30s) otherwise. Keeps the UI live without burning requests when
+  // nothing's happening.
+  useEffect(() => {
+    const running =
+      importStatus?.lastfm.phase === "running" ||
+      importStatus?.listenbrainz.phase === "running";
+    const interval = running ? 2_000 : 30_000;
+    const id = setInterval(() => {
+      api<ImportStatusResponse>("/api/settings/import/status")
+        .then(setImportStatus)
+        .catch(() => {});
+    }, interval);
+    return () => clearInterval(id);
+  }, [importStatus?.lastfm.phase, importStatus?.listenbrainz.phase]);
+
+  async function startImport(source: "lastfm" | "listenbrainz") {
+    try {
+      await api(`/api/settings/import/${source}`, { method: "POST" });
+      // Immediate refresh so the button flips to "Running…" without
+      // waiting for the next poll tick.
+      const fresh = await api<ImportStatusResponse>("/api/settings/import/status");
+      setImportStatus(fresh);
+    } catch (err) {
+      alert(`Failed to start ${source} import: ${err instanceof Error ? err.message : "unknown"}`);
+    }
+  }
 
   async function requeueArtistLinks(mode: "missing" | "all") {
     setRequeuingLinks(true);
@@ -187,6 +223,31 @@ export default function Settings() {
           <Input value={settings.listenbrainz_token} onChange={(e) => update("listenbrainz_token", e.target.value)} />
         </Field>
         <Toggle label="Relay scrobbles to ListenBrainz" value={settings.relay_listenbrainz} onChange={(v) => update("relay_listenbrainz", v)} />
+      </Section>
+
+      <Section title="Import scrobble history">
+        <p className="text-xs text-muted-foreground">
+          One-click bulk import from Last.fm or ListenBrainz. Reads the username already
+          configured above. Re-runs are safe — a unique-index dedupe means existing scrobbles
+          are skipped, only new rows land. Imported scrobbles are flagged as already-relayed
+          so the relay job doesn't bounce them back to the source.
+        </p>
+        {importStatus && (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <ImportPanel
+              label="Last.fm"
+              status={importStatus.lastfm}
+              configured={!!settings.lastfm_username && !!settings.lastfm_api_key}
+              onStart={() => startImport("lastfm")}
+            />
+            <ImportPanel
+              label="ListenBrainz"
+              status={importStatus.listenbrainz}
+              configured={!!settings.listenbrainz_username}
+              onStart={() => startImport("listenbrainz")}
+            />
+          </div>
+        )}
       </Section>
 
       <Section title="slskd">
@@ -444,5 +505,65 @@ function Toggle({ label, value, onChange }: { label: string; value: boolean; onC
       <input type="checkbox" checked={value} onChange={(e) => onChange(e.target.checked)} className="accent-accent" />
       <span>{label}</span>
     </label>
+  );
+}
+
+function ImportPanel({
+  label,
+  status,
+  configured,
+  onStart,
+}: {
+  label: string;
+  status: import("@/lib/dto").ImportStatus;
+  configured: boolean;
+  onStart: () => void;
+}) {
+  const running = status.phase === "running";
+  const done = status.phase === "done";
+  const errored = status.phase === "error";
+  const finishedRecently =
+    status.finished_at !== null && Date.now() - status.finished_at < 5 * 60_000;
+  return (
+    <div className="rounded-xl border border-border/60 bg-background/40 p-3 space-y-2">
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-sm font-medium">{label}</span>
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={onStart}
+          disabled={!configured || running}
+          title={!configured ? "Configure username + key first" : undefined}
+        >
+          {running ? "Importing…" : done || errored ? "Re-run" : "Import"}
+        </Button>
+      </div>
+      {!configured && (
+        <p className="text-[11px] text-muted-foreground">
+          Configure the username (and API key for Last.fm) above first.
+        </p>
+      )}
+      {running && (
+        <div className="text-[11px] text-muted-foreground space-y-0.5">
+          <div>
+            Page <span className="tabular-nums text-foreground">{status.pages_fetched}</span> ·
+            fetched <span className="tabular-nums text-foreground">{status.fetched.toLocaleString()}</span> ·
+            new <span className="tabular-nums text-foreground">{status.inserted.toLocaleString()}</span>
+          </div>
+          <div>Background job — safe to navigate away.</div>
+        </div>
+      )}
+      {done && finishedRecently && (
+        <div className="text-[11px] text-muted-foreground">
+          Imported <span className="text-foreground tabular-nums">{status.inserted.toLocaleString()}</span> new scrobbles
+          {status.fetched > status.inserted && (
+            <> · {(status.fetched - status.inserted).toLocaleString()} already in DB</>
+          )}.
+        </div>
+      )}
+      {errored && (
+        <div className="text-[11px] text-destructive">{status.error ?? "Import failed."}</div>
+      )}
+    </div>
   );
 }

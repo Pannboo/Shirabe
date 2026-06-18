@@ -61,3 +61,18 @@ runMigrationOnce("invalidate_artist_images_v1", () => {
 runMigrationOnce("invalidate_artist_images_v2_deezer", () => {
   db.exec(`DELETE FROM artist_images`);
 });
+
+// 2026-06: enforce scrobble uniqueness on (user_id, artist, track, timestamp).
+// Required so the Last.fm / ListenBrainz history-import flow can use
+// INSERT OR IGNORE for idempotent re-runs. Existing duplicates are
+// collapsed first (keeping the lowest id) — without that the CREATE
+// UNIQUE INDEX would fail on any DB that already has dupes.
+runMigrationOnce("uniq_scrobbles_v1", () => {
+  db.exec(`
+    DELETE FROM scrobbles WHERE id NOT IN (
+      SELECT MIN(id) FROM scrobbles GROUP BY user_id, artist, track, timestamp
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS uniq_scrobble
+      ON scrobbles(user_id, artist, track, timestamp);
+  `);
+});

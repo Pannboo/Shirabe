@@ -31,6 +31,22 @@ export interface ArtistLinksStatsResponse {
   recent_missing: { mb_artist_id: string; artist_name: string | null; updated_at: number }[];
 }
 
+export interface ImportStatus {
+  source: "lastfm" | "listenbrainz";
+  phase: "idle" | "running" | "done" | "error";
+  started_at: number | null;
+  finished_at: number | null;
+  pages_fetched: number;
+  fetched: number;
+  inserted: number;
+  error: string | null;
+}
+
+export interface ImportStatusResponse {
+  lastfm: ImportStatus;
+  listenbrainz: ImportStatus;
+}
+
 export interface AlbumDetailDto {
   artist: string;
   album: string;
