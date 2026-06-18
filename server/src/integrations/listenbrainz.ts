@@ -117,6 +117,22 @@ export async function lookupLbRelease(artist: string, album: string): Promise<Lb
   };
 }
 
+// Title-only fallback. Used when the artist+title lookup misses — usually
+// because the scrobbled "artist" is a credited vocalist (e.g. "Anthony
+// Ramos" on a Hamilton cast recording) rather than the album-level
+// "Original Broadway Cast" credit. LB still does fuzzy matching, so
+// passing just the release name often hits.
+export async function lookupLbReleaseByTitle(album: string): Promise<LbAlbumLookup | null> {
+  const params = new URLSearchParams({ release_name: album });
+  const data = await lbGet<LbReleaseMetadata>(`/metadata/lookup/?${params.toString()}`);
+  if (!data?.release) return null;
+  return {
+    caa_release_mbid: data.release.caa_release_mbid ?? null,
+    release_mbid: data.release.mbid ?? null,
+    year: data.release.year ?? null,
+  };
+}
+
 interface LbArtistMetadata {
   // The /metadata/artist response is keyed by artist mbid.
   [mbid: string]: {

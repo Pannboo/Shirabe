@@ -37,8 +37,8 @@ export default function PublicDashboard() {
   const decades = useApi<DecadesResponse>(`/api/public/stats/decades`, [], { pollMs: 5 * 60_000 });
   const nowPlaying = useNowPlaying();
   const realScrobbles = recent.data?.scrobbles ?? [];
-  const ghosts = useGhostScrobbles(nowPlaying, realScrobbles);
-  const mergedScrobbles = [...ghosts, ...realScrobbles];
+  // Hook returns the merged + cover-backfilled list directly.
+  const mergedScrobbles = useGhostScrobbles(nowPlaying, realScrobbles);
 
   const artistItems = artists.data?.items ?? [];
   const albumItems = albums.data?.items ?? [];

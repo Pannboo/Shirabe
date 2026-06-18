@@ -72,3 +72,25 @@ Versioned, rate-limited (60 req/min/IP), CORS-allowlisted (`ALLOWED_ORIGINS`):
 - `GET /api/v1/public/heatmap?year=2026`
 
 All responses include `X-Shirabe-Version: 1`.
+
+## Credits
+
+Shirabe stands on the shoulders of two projects in particular:
+
+- **[Koito](https://koito.mnrva.dev/)** — the design of the public stats
+  dashboard, artist page hero, and overall "comfy listening journal" feel
+  is heavily inspired by Koito's UI. The display-serif headings,
+  big-art-hero artist page, and stat-lockup typography all come from
+  studying how Koito presents the same shape of data.
+- **[edideaur/AOTY-api](https://github.com/edideaur/AOTY-api)** —
+  the AlbumOfTheYear scraper in `server/src/integrations/sources/aoty.ts`
+  uses the CSS selectors and HTML structure documented by that project.
+  Their HTMLRewriter-based Cloudflare Worker is the source-of-truth for
+  what AOTY's live HTML looks like; this codebase translates the same
+  selectors into regex form for the Node.js server.
+
+Plus the usual cast: MusicBrainz / Cover Art Archive / ListenBrainz /
+Last.fm / Deezer for metadata; slskd / Navidrome / beets for the
+download + library plumbing; FlareSolverr for unblocking the scraper
+sources that sit behind Cloudflare.
+

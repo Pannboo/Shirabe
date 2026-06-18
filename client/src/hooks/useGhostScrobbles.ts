@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { NowPlayingDto } from "@/hooks/useNowPlaying";
 
 export interface Scrobble {
@@ -15,21 +15,32 @@ function key(s: { track: string; artist: string }): string {
   return `${s.artist.toLowerCase()}|${s.track.toLowerCase()}`;
 }
 
-// Bridges the gap between "track just finished playing" and "the real scrobble
-// lands on the server" — without this, the previous song briefly vanishes from
-// the feed entirely (it's no longer the live row, not yet a scrobble) and the
-// list flashes/reflows. We synthesise a client-side scrobble at the moment of
-// transition and drop it as soon as the authoritative scrobble appears in
-// `real`, or after GHOST_TTL_MS if it never does (skipped track).
+// Bridges the gap between "track just finished playing" and "the real
+// scrobble lands on the server" — without this the previous song briefly
+// vanishes from the feed entirely (no longer the live row, not yet a
+// scrobble) and the list flashes/reflows. We synthesise a client-side
+// scrobble at the moment of transition and drop it as soon as the
+// authoritative scrobble appears in `real`, or after GHOST_TTL_MS if it
+// never does (skipped track).
 //
-// Ghosts are intentionally not persisted — a page refresh shows only real
-// server state, which is the source of truth.
+// Also memoises cover_art_urls by content key. The server enqueues cover
+// art on-demand, which means a freshly-scrobbled row often arrives with
+// cover_art_url=null on the first poll and gets resolved on subsequent
+// polls. Without this memory the cover briefly disappears when the ghost
+// hands off to the real scrobble. We remember the last good cover for
+// each (artist, track) and backfill onto null-covered reals.
+//
+// Returns the FULL merged list (ghosts ahead of reals, deduped by content
+// key). Caller no longer needs to spread ghosts + reals separately.
 export function useGhostScrobbles(
   nowPlaying: NowPlayingDto | null,
   real: Scrobble[],
 ): Scrobble[] {
   const [ghosts, setGhosts] = useState<Scrobble[]>([]);
   const prev = useRef<NowPlayingDto | null>(null);
+  // Persistent map of last-known cover URLs by content key. Survives ghost
+  // eviction so the real scrobble inherits the cover.
+  const coverMemory = useRef<Map<string, string>>(new Map());
 
   // On every now-playing change, if the previous live track is a different
   // track, materialise it as a ghost scrobble at "just now".
@@ -52,6 +63,9 @@ export function useGhostScrobbles(
         timestamp: Math.floor(Date.now() / 1000),
         cover_art_url: previous.cover_art_url,
       };
+      if (ghost.cover_art_url) {
+        coverMemory.current.set(key(ghost), ghost.cover_art_url);
+      }
       setGhosts((g) => {
         const k = key(ghost);
         if (g.some((x) => key(x) === k)) return g;
@@ -60,6 +74,14 @@ export function useGhostScrobbles(
     }
     prev.current = current;
   }, [nowPlaying]);
+
+  // Remember any real scrobble's cover URL too — gives us a memory pool
+  // for the next live track that revisits the same (artist, track).
+  useEffect(() => {
+    for (const s of real) {
+      if (s.cover_art_url) coverMemory.current.set(key(s), s.cover_art_url);
+    }
+  }, [real]);
 
   // Evict ghosts the server has now scrobbled (real took over), and drop
   // anything older than the TTL.
@@ -86,5 +108,14 @@ export function useGhostScrobbles(
     return () => clearInterval(id);
   }, []);
 
-  return ghosts;
+  // Final merged + cover-backfilled list. Ghosts up front (newest data
+  // wins), then reals with any null cover_art_url filled in from memory.
+  return useMemo(() => {
+    const realWithCovers = real.map((s) => {
+      if (s.cover_art_url) return s;
+      const remembered = coverMemory.current.get(key(s));
+      return remembered ? { ...s, cover_art_url: remembered } : s;
+    });
+    return [...ghosts, ...realWithCovers];
+  }, [ghosts, real]);
 }

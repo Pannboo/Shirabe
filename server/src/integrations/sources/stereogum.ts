@@ -1,47 +1,29 @@
 import { fetchRss, parseRssItems } from "./rssHelpers.js";
+import { searchReleases } from "../musicbrainz.js";
 import type { RawSeed, Source } from "./index.js";
 
 // Stereogum's "Album Of The Week" is a clean weekly editorial pick — one
-// album per week, taste-maker curation, parseable title format. Premature
-// Evaluation is similar but more frequent (early reviews ahead of release).
+// album per week, taste-maker curation. Premature Evaluation is similar
+// but more frequent (early reviews ahead of release).
 const FEEDS = [
   { url: "https://www.stereogum.com/category/album-of-the-week/feed/", label: "AOTW", score: 0.78 },
   { url: "https://www.stereogum.com/category/premature-evaluation/feed/", label: "Premature", score: 0.7 },
 ];
 
-// Stereogum titles look like:
-//   "Album Of The Week: Artist Name Album Title"
-//   "Premature Evaluation: Artist Name — Album Title"
-//   "Album Of The Week: Artist Name 'Album Title'"
-// We strip the prefix and try to split on em dash / quoted album / colon.
+// Stereogum titles look like (as of 2026):
+//   "Album Of The Week: Styrofoam Winos Any River"
+//   "Premature Evaluation: Olivia Rodrigo you seem pretty sad..."
+// There's NO machine-readable separator between artist and album — both
+// halves run together. We can't split mechanically, so instead we strip
+// the prefix and pass the remainder to MusicBrainz release search.
+// MB knows how to find "Any River by Styrofoam Winos" even when given
+// the concatenated string, and returns a structured (artist, title)
+// pair we can use.
 const PREFIX_RE = /^(?:Album Of The Week|Premature Evaluation|AOTW)\s*[:\-]\s*/i;
 
-interface Parsed { artist: string; title: string }
-
-function parseStereogumTitle(raw: string): Parsed | null {
-  const stripped = raw.replace(PREFIX_RE, "").trim();
-  if (!stripped) return null;
-
-  // Most reliable: artist — album (em dash or en dash)
-  const dashMatch = stripped.match(/^(.+?)\s*[–—]\s*(.+)$/);
-  if (dashMatch && dashMatch[1] && dashMatch[2]) {
-    return { artist: dashMatch[1].trim(), title: dashMatch[2].trim() };
-  }
-
-  // Next: artist 'album' or artist "album"
-  const quoteMatch = stripped.match(/^(.+?)\s+["'‘“](.+?)["'’”]\s*$/);
-  if (quoteMatch && quoteMatch[1] && quoteMatch[2]) {
-    return { artist: quoteMatch[1].trim(), title: quoteMatch[2].trim() };
-  }
-
-  // Last resort: ASCII hyphen with surrounding spaces
-  const hypMatch = stripped.match(/^(.+?)\s+-\s+(.+)$/);
-  if (hypMatch && hypMatch[1] && hypMatch[2]) {
-    return { artist: hypMatch[1].trim(), title: hypMatch[2].trim() };
-  }
-
-  return null;
-}
+// Reject MB matches under this score — keeps us from attributing a
+// Stereogum pick to some random unrelated release.
+const MB_SCORE_FLOOR = 80;
 
 export const stereogumSource: Source = {
   id: "stereogum",
@@ -54,27 +36,28 @@ export const stereogumSource: Source = {
       const items = parseRssItems(xml);
       let parsedCount = 0;
       for (const it of items.slice(0, 15)) {
-        const p = parseStereogumTitle(it.title);
-        if (!p) continue;
+        const stripped = it.title.replace(PREFIX_RE, "").trim();
+        if (!stripped) continue;
+        const results = await searchReleases(stripped, 3);
+        const best = results[0];
+        if (!best || best.score < MB_SCORE_FLOOR) continue;
         parsedCount += 1;
         seeds.push({
           source: "stereogum",
-          artist: p.artist,
-          title: p.title,
-          release_mbid: null,
-          artist_mbid: null,
+          artist: best.artistName,
+          title: best.title,
+          release_mbid: best.releaseId,
+          artist_mbid: best.artistId,
           mode: "album",
           score: feed.score,
           reason: feed.label === "AOTW" ? "Stereogum Album of the Week" : "Stereogum Premature Evaluation",
         });
       }
-      console.log(`[stereogum/${feed.label}] parsed ${parsedCount}/${items.length} items`);
-      // When the title regex matches 0 items, dump a sample so we can see
-      // what the actual title format looks like and update the parser.
+      console.log(`[stereogum/${feed.label}] parsed ${parsedCount}/${items.length} items (via MB search)`);
       if (parsedCount === 0 && items.length > 0) {
         const sample = items.slice(0, 3).map((it) => `  - ${it.title}`).join("\n");
         console.warn(
-          `[stereogum/${feed.label}] no titles matched parser. Sample titles:\n${sample}`,
+          `[stereogum/${feed.label}] MB search found nothing matching any title. Sample titles:\n${sample}`,
         );
       }
     }

@@ -37,14 +37,23 @@ export function parseRssItems(xml: string): RssItem[] {
   return items;
 }
 
-// Trims an HTML/RSS document into a short preview suitable for log lines.
-// Skips down past <head> to give a more useful snippet of the actual
-// content, and collapses whitespace so the log entry doesn't sprawl.
-export function htmlPreview(doc: string, len = 500): string {
+// Trims an HTML document down to a meaningful preview for log diagnostics.
+// Walks past <head> AND past any leading <script>/<style>/<noscript> blocks
+// inside <body> so the preview lands on actual page content (chart rows,
+// list items) rather than analytics scripts and theme-detector boilerplate.
+// Collapses whitespace so the log entry doesn't sprawl across the console.
+export function htmlPreview(doc: string, len = 2000): string {
   const bodyIdx = doc.toLowerCase().indexOf("<body");
-  const trimmed = bodyIdx > 0 ? doc.slice(bodyIdx) : doc;
+  let trimmed = bodyIdx > 0 ? doc.slice(bodyIdx) : doc;
+  // Strip leading <script>, <style>, <noscript>, <!--...--> blocks. AOTY/RYM
+  // wrap the first ~10KB of <body> in those before any actual content.
+  trimmed = trimmed
+    .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, "")
+    .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, "")
+    .replace(/<noscript\b[^>]*>[\s\S]*?<\/noscript>/gi, "")
+    .replace(/<!--[\s\S]*?-->/g, "");
   return trimmed
-    .slice(0, len * 4)            // pull enough raw chars to survive whitespace collapse
+    .slice(0, len * 4)
     .replace(/\s+/g, " ")
     .slice(0, len);
 }

@@ -5,9 +5,9 @@ import {
   setCoverArt,
 } from "../db/queries/coverart.js";
 import { getCoverArtUrl } from "../integrations/coverart.js";
-import { findRelease } from "../integrations/musicbrainz.js";
+import { findRelease, searchReleases } from "../integrations/musicbrainz.js";
 import { getLastFmAlbumImage } from "../integrations/lastfm.js";
-import { lookupLbRelease } from "../integrations/listenbrainz.js";
+import { lookupLbRelease, lookupLbReleaseByTitle } from "../integrations/listenbrainz.js";
 
 // Public helper: returns a URL if already cached, else enqueues for the background worker.
 export function getOrEnqueueCoverArt(artist: string, album: string | null): string | null {
@@ -43,6 +43,8 @@ export async function resolveCoverArtBatch(): Promise<void> {
     let year: number | null = null;
     let fromMb = false;
     let fromLb = false;
+    let fromMbTitle = false;
+    let fromLbTitle = false;
     let fromLfm = false;
 
     const release = await findRelease(artist, album);
@@ -54,9 +56,7 @@ export async function resolveCoverArtBatch(): Promise<void> {
     }
 
     // ListenBrainz fallback. Routes the LB-suggested MBID through CAA's
-    // JSON API so we get the canonical URL and pick up the year on the
-    // way. Records the MBID on the coverart row even when CAA ends up
-    // having no art for it — so subsequent passes don't re-query MB.
+    // JSON API so we get the canonical URL and pick up the year on the way.
     if (!url) {
       const lb = await lookupLbRelease(artist, album);
       const lbMbid = lb?.caa_release_mbid ?? lb?.release_mbid ?? null;
@@ -68,6 +68,36 @@ export async function resolveCoverArtBatch(): Promise<void> {
       }
     }
 
+    // Title-only MusicBrainz fallback. Catches cast / compilation /
+    // soundtrack releases where the scrobbled "artist" is a credited
+    // vocalist that doesn't match the album-level release artist
+    // (e.g. "Anthony Ramos" on Hamilton: An American Musical → the
+    // release is credited to "Original Broadway Cast", not Anthony).
+    if (!url) {
+      const results = await searchReleases(album, 5);
+      const best = results[0];
+      if (best && best.score >= 75) {
+        if (!mbReleaseId) mbReleaseId = best.releaseId;
+        if (year === null) year = best.year;
+        url = await getCoverArtUrl(best.releaseId);
+        if (url) fromMbTitle = true;
+      }
+    }
+
+    // Title-only ListenBrainz fallback. LB's release-only lookup is
+    // notably fuzzier than MB's structured search and sometimes catches
+    // releases MB ranks too low (special editions, region masters, etc).
+    if (!url) {
+      const lb = await lookupLbReleaseByTitle(album);
+      const lbMbid = lb?.caa_release_mbid ?? lb?.release_mbid ?? null;
+      if (lbMbid) {
+        if (!mbReleaseId) mbReleaseId = lbMbid;
+        if (year === null && lb?.year) year = lb.year;
+        url = await getCoverArtUrl(lbMbid);
+        if (url) fromLbTitle = true;
+      }
+    }
+
     if (!url) {
       url = await getLastFmAlbumImage(artist, album);
       if (url) fromLfm = true;
@@ -75,7 +105,10 @@ export async function resolveCoverArtBatch(): Promise<void> {
 
     console.log(
       `[coverart] ${artist} — ${album} → mb=${fromMb ? "yes" : "no"}` +
-      ` lb=${fromLb ? "yes" : "no"} lfm=${fromLfm ? "yes" : "no"}` +
+      ` lb=${fromLb ? "yes" : "no"}` +
+      ` mb-title=${fromMbTitle ? "yes" : "no"}` +
+      ` lb-title=${fromLbTitle ? "yes" : "no"}` +
+      ` lfm=${fromLfm ? "yes" : "no"}` +
       ` result=${url ? "resolved" : "missing"}`,
     );
 
