@@ -1,18 +1,26 @@
-# Shirabe + slskd + navidrome + flaresolverr stack.
+# Shirabe — minimal compose for a homelab where slskd and Navidrome are
+# already running elsewhere. Spins up only what this project owns:
 #
-# Volumes that MUST be shared across services:
-#   ./downloads   — slskd ↔ shirabe (slskd drops files here, shirabe organises them)
-#   ./music       — shirabe ↔ navidrome (shirabe writes here via beets, navidrome scans)
+#   shirabe        — the app itself (port 3000)
+#   flaresolverr   — Cloudflare-resolving proxy for RYM/AOTY scraper sources
+#
+# Point Shirabe at your existing slskd + navidrome via the Settings UI
+# after first boot. If you're setting all of those up fresh and want them
+# in this same compose stack, uncomment the slskd + navidrome services at
+# the bottom of this file.
 #
 # First-time setup:
 #   cp .env.example .env
 #   edit SECRET_KEY (openssl rand -hex 48)
-#   optionally fill in any BOOT_* vars for first-run seeding
 #   docker compose up -d --build
 #
-# After deploy: visit http://<host>:3000, log in with your Navidrome
-# credentials (admin user becomes the Shirabe admin), then walk through
-# Settings to fill in any integrations you didn't seed via BOOT_*.
+# Volumes:
+#   ./data         — Shirabe's SQLite + caches (DO NOT DELETE)
+#   ./downloads    — slskd's download landing dir; mount the same host
+#                    path here as wherever your slskd writes
+#   ./music        — navidrome's library dir; mount the same host path
+#                    here as wherever your navidrome reads from
+#   ./beets_config.yaml  — your beets config (copy from .example)
 
 services:
   shirabe:
@@ -27,23 +35,24 @@ services:
       SECRET_KEY: ${SECRET_KEY:?set SECRET_KEY in .env}
       DATABASE_URL: /data/shirabe.db
       PORT: "3000"
-      NAVIDROME_URL: http://navidrome:4533
       ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-}
       BEETS_BIN: beet
       BEETS_CONFIG: /etc/beets/config.yaml
       DOWNLOADS_DIR: /downloads
       MUSIC_DIR: /music
-      # Optional first-run seeding (only takes effect when the settings
-      # table is empty). Set any of these in .env to skip the manual
-      # Settings walkthrough on a fresh deploy.
+      # NAVIDROME_URL is read once at startup as a fallback default; the
+      # Settings UI value (navidrome_url) takes precedence after first boot.
+      NAVIDROME_URL: ${NAVIDROME_URL:-}
+      # Optional first-run seeding — only applied when the settings table
+      # is empty. Set any of these in .env to skip the first-run walkthrough.
       BOOT_LASTFM_API_KEY: ${BOOT_LASTFM_API_KEY:-}
       BOOT_LASTFM_SHARED_SECRET: ${BOOT_LASTFM_SHARED_SECRET:-}
       BOOT_LASTFM_USERNAME: ${BOOT_LASTFM_USERNAME:-}
       BOOT_LISTENBRAINZ_USERNAME: ${BOOT_LISTENBRAINZ_USERNAME:-}
       BOOT_LISTENBRAINZ_TOKEN: ${BOOT_LISTENBRAINZ_TOKEN:-}
-      BOOT_SLSKD_URL: ${BOOT_SLSKD_URL:-http://slskd:5030}
+      BOOT_SLSKD_URL: ${BOOT_SLSKD_URL:-}
       BOOT_SLSKD_API_KEY: ${BOOT_SLSKD_API_KEY:-}
-      BOOT_NAVIDROME_URL: ${BOOT_NAVIDROME_URL:-http://navidrome:4533}
+      BOOT_NAVIDROME_URL: ${BOOT_NAVIDROME_URL:-}
       BOOT_NAVIDROME_USERNAME: ${BOOT_NAVIDROME_USERNAME:-}
       BOOT_NAVIDROME_PASSWORD: ${BOOT_NAVIDROME_PASSWORD:-}
       BOOT_RELAY_LASTFM: ${BOOT_RELAY_LASTFM:-}
@@ -52,53 +61,61 @@ services:
       BOOT_DISMISS_COOLDOWN_DAYS: ${BOOT_DISMISS_COOLDOWN_DAYS:-}
     volumes:
       - ./data:/data
-      - ./downloads:/downloads        # shared with slskd
-      - ./music:/music                # shared with navidrome
+      - ./downloads:/downloads
+      - ./music:/music
       - ./beets_config.yaml:/etc/beets/config.yaml:ro
     depends_on:
-      - slskd
-      - navidrome
       - flaresolverr
 
-  # FlareSolverr: headless-browser proxy that resolves Cloudflare challenge
-  # pages. Required for RYM/AOTY scraper sources to work reliably. After
+  # Headless-browser proxy that resolves Cloudflare challenge pages so the
+  # RYM and AOTY scraper sources can actually return results. After first
   # boot, paste `http://flaresolverr:8191/v1` into Shirabe → Settings →
   # Cloudflare bypass.
   flaresolverr:
     image: ghcr.io/flaresolverr/flaresolverr:latest
-    container_name: flaresolverr
+    container_name: shirabe-flaresolverr
     restart: unless-stopped
     environment:
       LOG_LEVEL: info
       LOG_HTML: "false"
       CAPTCHA_SOLVER: none
       TZ: ${TZ:-UTC}
-    # No port exposure needed — Shirabe reaches it via the internal docker network.
+    # No port exposure — Shirabe reaches it via the internal docker network.
 
-  # Replace with your existing slskd config. Shirabe needs /downloads shared with this service.
-  slskd:
-    image: slskd/slskd:latest
-    container_name: slskd
-    restart: unless-stopped
-    ports:
-      - "5030:5030"
-      - "50300:50300"
-    environment:
-      SLSKD_REMOTE_CONFIGURATION: "true"
-    volumes:
-      - ./slskd:/app
-      - ./downloads:/downloads        # MUST be the same host path as shirabe
-
-  # Replace with your existing navidrome config. Shirabe needs /music shared with this service.
-  navidrome:
-    image: deluan/navidrome:latest
-    container_name: navidrome
-    restart: unless-stopped
-    ports:
-      - "4533:4533"
-    environment:
-      ND_LOGLEVEL: info
-      ND_SCANSCHEDULE: 1h
-    volumes:
-      - ./navidrome:/data
-      - ./music:/music                # MUST be the same host path as shirabe
+# ============================================================================
+# Optional: fresh-install slskd + navidrome
+# ============================================================================
+#
+# If you don't already have slskd and navidrome running, uncomment the
+# block below to spin them up alongside Shirabe. Otherwise leave commented
+# and point Shirabe at your existing instances via Settings (or BOOT_*
+# vars in .env).
+#
+# Remember to keep `./downloads` shared between shirabe and slskd, and
+# `./music` shared between shirabe and navidrome.
+#
+#   slskd:
+#     image: slskd/slskd:latest
+#     container_name: slskd
+#     restart: unless-stopped
+#     ports:
+#       - "5030:5030"
+#       - "50300:50300"
+#     environment:
+#       SLSKD_REMOTE_CONFIGURATION: "true"
+#     volumes:
+#       - ./slskd:/app
+#       - ./downloads:/downloads
+#
+#   navidrome:
+#     image: deluan/navidrome:latest
+#     container_name: navidrome
+#     restart: unless-stopped
+#     ports:
+#       - "4533:4533"
+#     environment:
+#       ND_LOGLEVEL: info
+#       ND_SCANSCHEDULE: 1h
+#     volumes:
+#       - ./navidrome:/data
+#       - ./music:/music

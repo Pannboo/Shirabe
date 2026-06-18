@@ -34,6 +34,11 @@ COPY --from=build /app/package.json /app/package-lock.json* ./
 COPY --from=build /app/server/package.json server/
 COPY --from=build /app/server/dist server/dist
 COPY --from=build /app/server/src/static server/dist/static
+# tsc only emits .ts → .js; the schema.sql sitting next to db/client.ts
+# has to be copied manually so readFileSync(join(here, "schema.sql")) at
+# boot resolves. Without this the container crashes on first start with
+# ENOENT for schema.sql.
+COPY --from=build /app/server/src/db/schema.sql server/dist/db/schema.sql
 # npm workspaces hoist every dep to the root /app/node_modules — there is
 # no /app/server/node_modules to copy. Node resolves from the root tree
 # because /app/server is nested inside /app.
