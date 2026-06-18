@@ -177,6 +177,38 @@ settingsRouter.post("/media-cache/requeue", (req, res) => {
 // curl -H "Authorization: Bearer <token>" \
 //   'http://shirabe:3000/api/settings/scraper-debug?source=rym&via=flaresolverr'
 
+// Counts occurrences of known scraper-target selectors / markers in the
+// raw response. Tells us at a glance whether the markup we expect actually
+// exists in the doc, without having to page through 200KB of HTML.
+function probeSelectors(text: string): Record<string, number> {
+  const probes = [
+    // RYM chart-item markers
+    "page_charts_section_charts_item_info",
+    "page_charts_section_charts_item_link",
+    "ui_name_locale_original",
+    "class=\"artist\"",
+    "/release/album/",
+    // AOTY markers
+    "albumBlock",
+    "artistTitle",
+    "albumTitle",
+    "/album/",
+    // Cloudflare challenge markers
+    "cf-challenge",
+    "Just a moment",
+    "Checking your browser",
+  ];
+  const result: Record<string, number> = {};
+  for (const p of probes) {
+    // count non-overlapping occurrences
+    let n = 0;
+    let i = 0;
+    while ((i = text.indexOf(p, i)) !== -1) { n += 1; i += p.length; }
+    if (n > 0) result[p] = n;
+  }
+  return result;
+}
+
 settingsRouter.get("/scraper-debug", async (req, res) => {
   const source = String(req.query.source ?? "");
   // Default bumped to 20KB so RYM's chart pages (typically 500KB+) give us
@@ -230,6 +262,7 @@ settingsRouter.get("/scraper-debug", async (req, res) => {
       via: "flaresolverr",
       content_length: html.length,
       preview: html.slice(0, limit),
+      selector_probe: probeSelectors(html),
     });
     return;
   }
@@ -253,6 +286,7 @@ settingsRouter.get("/scraper-debug", async (req, res) => {
       content_type: r.headers.get("content-type"),
       content_length: text.length,
       preview: text.slice(0, limit),
+      selector_probe: probeSelectors(text),
     });
   } catch (err) {
     res.status(502).json({

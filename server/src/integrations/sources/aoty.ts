@@ -91,11 +91,11 @@ function textOf(cellHtml: string): string {
 // .albumBlock > .albumTitle.
 function parseAlbumBlocks(html: string): ChartEntry[] {
   const entries: ChartEntry[] = [];
-  // Match each .albumBlock container. AOTY uses a non-greedy capture
-  // bounded by the next .albumBlock or end-of-document — but the
-  // simpler "block until two closing divs" pattern handles typical
-  // AOTY markup (the block ends with </div></div> for its content +
-  // wrapper).
+  // AOTY's /must-hear/ page surfaces the same album in multiple sections
+  // (highlights row, genre breakdowns, etc), so the raw match set is
+  // duplicate-heavy. Dedupe by content key — keep the first occurrence.
+  const seen = new Set<string>();
+
   const blockRe = /<div[^>]*class="[^"]*\balbumBlock\b[^"]*"[^>]*>([\s\S]*?)(?=<div[^>]*class="[^"]*\balbumBlock\b|<\/body>)/g;
   const artistRe = /<div[^>]*class="[^"]*\bartistTitle\b[^"]*"[^>]*>([\s\S]*?)<\/div>/i;
   const titleRe = /<div[^>]*class="[^"]*\balbumTitle\b[^"]*"[^>]*>([\s\S]*?)<\/div>/i;
@@ -108,7 +108,11 @@ function parseAlbumBlocks(html: string): ChartEntry[] {
     if (!a?.[1] || !t?.[1]) continue;
     const artist = textOf(a[1]);
     const title = textOf(t[1]);
-    if (artist && title) entries.push({ artist, title });
+    if (!artist || !title) continue;
+    const k = `${artist.toLowerCase()}|${title.toLowerCase()}`;
+    if (seen.has(k)) continue;
+    seen.add(k);
+    entries.push({ artist, title });
   }
   return entries;
 }
