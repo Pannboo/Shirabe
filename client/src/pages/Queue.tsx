@@ -1,6 +1,8 @@
+import { useState } from "react";
 import QueueRowItem from "@/components/QueueRow";
 import SectionTitle from "@/components/SectionTitle";
 import { useApi } from "@/hooks/useApi";
+import { api } from "@/lib/api";
 
 interface QueueResponse {
   downloads: Array<{
@@ -23,10 +25,38 @@ interface QueueResponse {
 }
 
 export default function Queue() {
-  const { data, loading } = useApi<QueueResponse>(`/api/queue`, [], { pollMs: 5_000 });
+  const { data, loading, reload } = useApi<QueueResponse>(`/api/queue`, [], { pollMs: 5_000 });
+  const [clearing, setClearing] = useState(false);
+
+  const stalledCount = (data?.downloads ?? []).filter(
+    (d) => d.status === "queued" || d.status === "searching" || d.status === "downloading",
+  ).length;
+
+  async function clearStalled(): Promise<void> {
+    if (stalledCount === 0) return;
+    if (!confirm(`Mark ${stalledCount} stalled download${stalledCount === 1 ? "" : "s"} as failed?`)) return;
+    setClearing(true);
+    try {
+      await api<{ cleared: number }>("/api/queue/clear-stalled", { method: "POST" });
+      reload();
+    } finally {
+      setClearing(false);
+    }
+  }
+
   return (
     <div className="space-y-6">
-      <h2 className="font-serif text-4xl md:text-5xl tracking-tight">Download queue</h2>
+      <div className="flex items-end justify-between gap-4">
+        <h2 className="font-serif text-4xl md:text-5xl tracking-tight">Download queue</h2>
+        <button
+          type="button"
+          onClick={clearStalled}
+          disabled={clearing || stalledCount === 0}
+          className="text-xs px-3 py-1.5 rounded-md border border-border bg-card hover:bg-accent/10 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+        >
+          {clearing ? "Clearing…" : `Clear stalled${stalledCount > 0 ? ` (${stalledCount})` : ""}`}
+        </button>
+      </div>
 
       <section>
         <SectionTitle trailing={`${data?.downloads.length ?? 0} tracked`}>

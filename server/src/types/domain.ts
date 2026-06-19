@@ -75,6 +75,11 @@ export interface Download {
   completed_at: number | null;
   artist: string | null;
   title: string | null;
+  // Persisted at queue time so pollDownloads can correlate each active row
+  // to a specific slskd transfer group instead of guessing from "any
+  // completed file in the list".
+  slskd_username: string | null;
+  slskd_folder: string | null;
 }
 
 export interface ReviewItem {

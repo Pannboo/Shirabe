@@ -37,6 +37,16 @@ interface SlskdDownload {
   size?: number;
 }
 
+// Grouped view of /api/v0/transfers/downloads — per (username, directory)
+// so pollDownloads can correlate by the username+folder it persisted when
+// it kicked the queue. slskd's `directory` field carries the full remote
+// folder path; that's what we matched our `slskd_folder` against.
+export interface SlskdDownloadGroup {
+  username: string;
+  directory: string;
+  files: SlskdDownload[];
+}
+
 // Audio formats we consider lossless. Used by the quality filter — when the
 // user has download_lossless_only set, anything else is rejected.
 const LOSSLESS_EXTS = new Set(["flac", "wav", "alac", "aiff", "ape", "wv"]);
@@ -81,14 +91,28 @@ export async function getSlskdSearch(id: string): Promise<SlskdSearchDetail | nu
   }
 }
 
-export async function listSlskdDownloads(): Promise<SlskdDownload[]> {
+export async function listSlskdDownloads(): Promise<SlskdDownloadGroup[]> {
   const url = slskdUrl(`/api/v0/transfers/downloads`);
   if (!url) return [];
   try {
     const res = await fetch(url, { headers: authHeaders() });
     if (!res.ok) return [];
-    const data = (await res.json()) as Array<{ directories?: Array<{ files?: SlskdDownload[] }> }>;
-    return data.flatMap((user) => user.directories?.flatMap((d) => d.files ?? []) ?? []);
+    const data = (await res.json()) as Array<{
+      username?: string;
+      directories?: Array<{ directory?: string; files?: SlskdDownload[] }>;
+    }>;
+    const groups: SlskdDownloadGroup[] = [];
+    for (const user of data) {
+      const username = user.username ?? "";
+      for (const dir of user.directories ?? []) {
+        groups.push({
+          username,
+          directory: dir.directory ?? "",
+          files: (dir.files ?? []).map((f) => ({ ...f, username })),
+        });
+      }
+    }
+    return groups;
   } catch {
     return [];
   }
@@ -303,10 +327,13 @@ export async function queueSlskdFiles(
 // Backwards-compatible auto-pick used by pollDownloads. Filters using the
 // configured quality criteria — fixes the previous behaviour of "biggest
 // file wins" which routinely grabbed video releases.
+//
+// Returns the (username, folder) that was queued so the caller can persist
+// it onto the download row for later correlation.
 export async function enqueueBestResult(
   searchId: string,
   mode: "album" | "track" = "album",
-): Promise<{ username: string; filename: string } | null> {
+): Promise<{ username: string; folder: string; fileCount: number } | null> {
   const search = await getSlskdSearch(searchId);
   if (!search) return null;
   const { candidates } = rankCandidates(search, { mode, strict: true });
@@ -314,7 +341,7 @@ export async function enqueueBestResult(
   if (!best) return null;
   const ok = await queueSlskdFiles(best.username, best.files.map((f) => ({ filename: f.filename, size: f.size })));
   if (!ok) return null;
-  return { username: best.username, filename: best.files[0]?.filename ?? best.folder };
+  return { username: best.username, folder: best.folder, fileCount: best.files.length };
 }
 
 export async function pingSlskd(): Promise<boolean> {

@@ -36,6 +36,11 @@ ensureColumn("suggestions", "score", "score REAL");
 ensureColumn("suggestions", "reason", "reason TEXT");
 ensureColumn("downloads", "artist", "artist TEXT");
 ensureColumn("downloads", "title", "title TEXT");
+// Correlation columns for pollDownloads — without them we'd have to guess
+// which slskd transfer belongs to which download row, and beets gets
+// triggered on the wrong file (or on an unrelated peer's leftover).
+ensureColumn("downloads", "slskd_username", "slskd_username TEXT");
+ensureColumn("downloads", "slskd_folder", "slskd_folder TEXT");
 // Local image cache (services/imageCache.ts) — stores a disk path + the
 // upstream Content-Type so /api/image/... can sendFile with the right
 // MIME header. NULL until the warm job / first lazy fetch populates it.
