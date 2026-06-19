@@ -8,13 +8,15 @@ import { findArtistInfo } from "../integrations/musicbrainz.js";
 import { getLbArtistImageByMbid } from "../integrations/listenbrainz.js";
 import { getLastFmArtistImage } from "../integrations/lastfm.js";
 import { getDeezerArtistImage } from "../integrations/deezer.js";
+import { publicUrlForArtist } from "../services/imageCache.js";
 
+// Returns a stable /api/image/artist/{hash} URL even before resolution
+// completes — the route serves a transparent placeholder until the
+// background worker fills the row.
 export function getOrEnqueueArtistImage(artist: string): string | null {
   if (!artist) return null;
-  const cached = getCachedArtistImage(artist);
-  if (cached) return cached;
-  enqueueArtistImage(artist);
-  return null;
+  if (!getCachedArtistImage(artist)) enqueueArtistImage(artist);
+  return publicUrlForArtist(artist);
 }
 
 // Resolution strategy:

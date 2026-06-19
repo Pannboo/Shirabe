@@ -8,14 +8,16 @@ import { getCoverArtUrl } from "../integrations/coverart.js";
 import { findRelease, searchReleases } from "../integrations/musicbrainz.js";
 import { getLastFmAlbumImage } from "../integrations/lastfm.js";
 import { lookupLbRelease, lookupLbReleaseByTitle } from "../integrations/listenbrainz.js";
+import { publicUrlForAlbum } from "../services/imageCache.js";
 
-// Public helper: returns a URL if already cached, else enqueues for the background worker.
+// Public helper: always returns a stable /api/image/album/{hash} URL when
+// an album is known, and enqueues the row if it isn't resolved yet. The
+// image route returns a transparent placeholder until the resolver
+// populates the row, so clients never see broken images.
 export function getOrEnqueueCoverArt(artist: string, album: string | null): string | null {
   if (!album) return null;
-  const cached = getCachedCoverArt(artist, album);
-  if (cached) return cached;
-  enqueueCoverArt(artist, album);
-  return null;
+  if (!getCachedCoverArt(artist, album)) enqueueCoverArt(artist, album);
+  return publicUrlForAlbum(artist, album);
 }
 
 // Resolves a few pending (artist, album) pairs per tick.

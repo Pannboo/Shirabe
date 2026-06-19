@@ -128,3 +128,52 @@ export function reseedCoverart(userId: number): { wiped: number; queued: number 
   })();
   return { wiped, queued };
 }
+
+// === Local image cache lookups (services/imageCache.ts) ====================
+
+export interface CoverartRow {
+  artist: string;
+  album: string;
+  url: string | null;
+  local_path: string | null;
+  content_type: string | null;
+}
+
+// Hash-based lookup. The /api/image/album/:hash route gets a 16-hex
+// content hash; we scan resolved rows and find the match by recomputing
+// the hash here. SQLite has no native sha1 and resolved-row count is
+// small (~hundreds), so a per-request scan is fine.
+const allResolvedCoverart = db.prepare(`
+  SELECT artist, album, url, local_path, content_type
+  FROM coverart WHERE url IS NOT NULL
+`);
+
+export function listAllCoverartWithUrl(): CoverartRow[] {
+  return allResolvedCoverart.all() as CoverartRow[];
+}
+
+const setCoverartLocalPath = db.prepare(`
+  UPDATE coverart SET local_path = ?, content_type = ?, updated_at = unixepoch()
+  WHERE artist = ? AND album = ?
+`);
+
+export function setCoverartLocal(
+  artist: string,
+  album: string,
+  localPath: string,
+  contentType: string,
+): void {
+  setCoverartLocalPath.run(localPath, contentType, artist, album);
+}
+
+// Eager-warm worklist: resolved rows that don't yet have a local file.
+const resolvedWithoutLocalStmt = db.prepare(`
+  SELECT artist, album, url, local_path, content_type
+  FROM coverart
+  WHERE status = 'resolved' AND url IS NOT NULL AND local_path IS NULL
+  LIMIT ?
+`);
+
+export function listResolvedCoverartWithoutLocal(limit: number): CoverartRow[] {
+  return resolvedWithoutLocalStmt.all(limit) as CoverartRow[];
+}

@@ -90,6 +90,10 @@ CREATE TABLE IF NOT EXISTS coverart (
   -- Release year, captured by the resolver from MusicBrainz when available.
   -- Drives the decade chart. Null when unknown.
   release_year INTEGER,
+  -- Local cache filename (relative to /data/image-cache/album/) populated
+  -- by services/imageCache.ts on first request or warm-cron tick.
+  local_path TEXT,
+  content_type TEXT,
   updated_at INTEGER DEFAULT (unixepoch()),
   PRIMARY KEY (artist, album)
 );
@@ -117,6 +121,10 @@ CREATE TABLE IF NOT EXISTS artist_images (
   mb_artist_id TEXT,
   url TEXT,
   status TEXT DEFAULT 'pending',
+  -- Local cache filename (relative to /data/image-cache/artist/) populated
+  -- by services/imageCache.ts on first request or warm-cron tick.
+  local_path TEXT,
+  content_type TEXT,
   updated_at INTEGER DEFAULT (unixepoch())
 );
 

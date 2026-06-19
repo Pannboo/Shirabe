@@ -97,3 +97,47 @@ export function reseedArtistImages(artists: string[]): { wiped: number; queued: 
   tx(artists);
   return { wiped, queued: artists.length };
 }
+
+// === Local image cache lookups (services/imageCache.ts) ====================
+
+export interface ArtistImageRow {
+  artist: string;
+  url: string | null;
+  local_path: string | null;
+  content_type: string | null;
+}
+
+// Mirror of coverart.listAllCoverartWithUrl — used by the hash-based
+// /api/image/artist/:hash route to find the matching row.
+const allArtistImagesWithUrl = db.prepare(`
+  SELECT artist, url, local_path, content_type
+  FROM artist_images WHERE url IS NOT NULL
+`);
+
+export function listAllArtistImagesWithUrl(): ArtistImageRow[] {
+  return allArtistImagesWithUrl.all() as ArtistImageRow[];
+}
+
+const setArtistImageLocalPath = db.prepare(`
+  UPDATE artist_images SET local_path = ?, content_type = ?, updated_at = unixepoch()
+  WHERE artist = ?
+`);
+
+export function setArtistImageLocal(
+  artist: string,
+  localPath: string,
+  contentType: string,
+): void {
+  setArtistImageLocalPath.run(localPath, contentType, artist);
+}
+
+const resolvedWithoutLocalStmt = db.prepare(`
+  SELECT artist, url, local_path, content_type
+  FROM artist_images
+  WHERE status = 'resolved' AND url IS NOT NULL AND local_path IS NULL
+  LIMIT ?
+`);
+
+export function listResolvedArtistImagesWithoutLocal(limit: number): ArtistImageRow[] {
+  return resolvedWithoutLocalStmt.all(limit) as ArtistImageRow[];
+}

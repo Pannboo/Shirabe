@@ -36,6 +36,13 @@ ensureColumn("suggestions", "score", "score REAL");
 ensureColumn("suggestions", "reason", "reason TEXT");
 ensureColumn("downloads", "artist", "artist TEXT");
 ensureColumn("downloads", "title", "title TEXT");
+// Local image cache (services/imageCache.ts) — stores a disk path + the
+// upstream Content-Type so /api/image/... can sendFile with the right
+// MIME header. NULL until the warm job / first lazy fetch populates it.
+ensureColumn("coverart", "local_path", "local_path TEXT");
+ensureColumn("coverart", "content_type", "content_type TEXT");
+ensureColumn("artist_images", "local_path", "local_path TEXT");
+ensureColumn("artist_images", "content_type", "content_type TEXT");
 
 // One-shot data migrations. Tracked in the settings table so each only runs
 // once across reboots.

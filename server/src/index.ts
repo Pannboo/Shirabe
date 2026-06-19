@@ -17,6 +17,7 @@ import { settingsRouter } from "./routes/settings.js";
 import { scrobbleIntakeRouter } from "./routes/scrobbleIntake.js";
 import { widgetRouter } from "./routes/widget.js";
 import { healthRouter } from "./routes/health.js";
+import { imageRouter } from "./routes/image.js";
 import { registerCron } from "./jobs/scheduler.js";
 import { pullSuggestions } from "./jobs/pullSuggestions.js";
 import { pollDownloads } from "./jobs/pollDownloads.js";
@@ -26,6 +27,7 @@ import { resolveArtistImageBatch } from "./jobs/resolveArtistImage.js";
 import { resolveArtistLinksBatch } from "./jobs/resolveArtistLinks.js";
 import { backfillReleaseYears } from "./jobs/backfillReleaseYears.js";
 import { syncNavidromeLibrary } from "./jobs/syncNavidromeLibrary.js";
+import { warmImageCacheBatch } from "./jobs/warmImageCache.js";
 
 migrate();
 bootstrapSettings();
@@ -49,6 +51,7 @@ app.use("/api/suggestions", suggestionsRouter);
 app.use("/api/queue", queueRouter);
 app.use("/api/review", reviewRouter);
 app.use("/api/settings", settingsRouter);
+app.use("/api/image", imageRouter);
 
 // ListenBrainz-compatible scrobble intake (real LB protocol paths).
 // Navidrome and other LB clients append `1/submit-listens` and `1/validate-token`
@@ -85,6 +88,7 @@ registerCron("resolveCoverArt", "*/30 * * * * *", resolveCoverArtBatch);
 registerCron("resolveArtistImage", "*/20 * * * * *", resolveArtistImageBatch);
 registerCron("resolveArtistLinks", "*/30 * * * * *", resolveArtistLinksBatch);
 registerCron("backfillReleaseYears", "*/5 * * * *", backfillReleaseYears);
+registerCron("warmImageCache", "*/60 * * * * *", warmImageCacheBatch);
 registerCron("syncNavidromeLibrary", "0 3 * * *", async () => {
   await syncNavidromeLibrary();
 });
