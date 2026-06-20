@@ -32,20 +32,47 @@ function classifyState(raw: string | undefined): FileState {
 // === Group correlation =====================================================
 //
 // We persisted the (username, folder) we queued onto each download row.
-// Match that against the slskd-side group. slskd's `directory` is the
-// remote folder path on the peer — same string we picked off the
-// Candidate, so an exact match works without normalisation.
+// Match that against the slskd-side group. slskd is sloppy about
+// separators (search responses use whatever the peer's OS uses —
+// usually `\` — but the transfer-list endpoint sometimes normalises
+// or appends a trailing slash). Compare both sides after normalising
+// to forward slashes + stripping trailing slashes, and fall back to a
+// basename match so a slkd re-rooting the path can't break correlation.
+
+function normaliseFolder(p: string): string {
+  return p.replace(/\\+/g, "/").replace(/\/+$/, "").toLowerCase();
+}
+
+function basenameOf(p: string): string {
+  const n = normaliseFolder(p);
+  const i = n.lastIndexOf("/");
+  return i < 0 ? n : n.slice(i + 1);
+}
 
 function findGroupFor(
   dl: { slskd_username: string | null; slskd_folder: string | null },
   groups: SlskdDownloadGroup[],
 ): SlskdDownloadGroup | null {
   if (!dl.slskd_username || !dl.slskd_folder) return null;
-  return (
-    groups.find(
-      (g) => g.username === dl.slskd_username && g.directory === dl.slskd_folder,
-    ) ?? null
-  );
+  const wantFolder = normaliseFolder(dl.slskd_folder);
+  const wantBase = basenameOf(dl.slskd_folder);
+
+  const sameUser = groups.filter((g) => g.username === dl.slskd_username);
+  if (sameUser.length === 0) return null;
+
+  // Strict: full path match (normalised).
+  const exact = sameUser.find((g) => normaliseFolder(g.directory) === wantFolder);
+  if (exact) return exact;
+
+  // Lenient: basename match (slskd re-rooted the path).
+  const byBase = sameUser.find((g) => basenameOf(g.directory) === wantBase);
+  if (byBase) return byBase;
+
+  // If the peer only has one transfer group in flight, attribute by user.
+  // Safe because a single peer rarely overlaps two of our active dl rows.
+  if (sameUser.length === 1) return sameUser[0] ?? null;
+
+  return null;
 }
 
 // On-disk landing path slskd writes the album to. slskd's default layout
@@ -88,10 +115,29 @@ export async function pollDownloads(): Promise<void> {
     if (dl.status === "downloading") {
       const group = findGroupFor(dl, groups);
       if (!group) {
-        // slskd has dropped the transfer from its list — either it
-        // completed and was cleared, or the peer disappeared. If we
-        // never saw a "succeeded" tick we treat it as inconclusive
-        // and leave the row alone for the next pass.
+        // Diagnostics so a future stuck row points the operator at the
+        // actual mismatch. The two most common causes are:
+        //   1. Pre-fix legacy row with slskd_username / slskd_folder NULL
+        //      (queued before correlation columns existed) — nothing the
+        //      poller can do; user must "Clear all" from the Queue page.
+        //   2. slskd dropped the transfer from its list because it
+        //      finished and the user's slskd is configured to auto-clear
+        //      completed transfers. Same remediation.
+        if (!dl.slskd_username || !dl.slskd_folder) {
+          console.warn(
+            `[download] dl#${dl.id} ${dl.artist ?? "?"} — ${dl.title ?? "?"} ` +
+            `stuck: no slskd_username/slskd_folder persisted (pre-fix row). ` +
+            `Use "Clear all" on the Queue page.`,
+          );
+        } else {
+          const userGroups = groups.filter((g) => g.username === dl.slskd_username);
+          console.warn(
+            `[download] dl#${dl.id} ${dl.artist ?? "?"} — ${dl.title ?? "?"} ` +
+            `no matching group for user=${dl.slskd_username} folder=${dl.slskd_folder}. ` +
+            `slskd reports ${userGroups.length} group(s) for that user: ` +
+            userGroups.map((g) => g.directory).join(" | "),
+          );
+        }
         continue;
       }
 

@@ -69,15 +69,12 @@ export function completeDownload(id: number, downloadPath: string): void {
   markComplete.run(downloadPath, id);
 }
 
-// Flip every still-active row to failed. Used by the "Clear stalled"
-// button on the Queue page — typically when a search filter (eg. min
-// files per album) makes the row spin forever because no candidate
-// passes. Preserves history; doesn't delete.
-const failAllActive = db.prepare(`
-  UPDATE downloads SET status = 'failed'
-  WHERE status IN ('queued', 'searching', 'downloading')
-`);
+// Wipes the downloads table. Used by the "Clear all" button on the
+// Queue page — clears both stalled (queued/searching/downloading) and
+// finished (complete/failed) rows in one go. slskd's own transfer list
+// is independent; clear those from slskd's UI if you want a full reset.
+const deleteAll = db.prepare(`DELETE FROM downloads`);
 
-export function clearStalledDownloads(): number {
-  return failAllActive.run().changes;
+export function clearAllDownloads(): number {
+  return deleteAll.run().changes;
 }

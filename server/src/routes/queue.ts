@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { requireAdmin, requireAuth } from "../auth/middleware.js";
-import { clearStalledDownloads, listDownloads } from "../db/queries/downloads.js";
+import { clearAllDownloads, listDownloads } from "../db/queries/downloads.js";
 import { listSlskdDownloads } from "../integrations/slskd.js";
 
 export const queueRouter = Router();
@@ -26,7 +26,7 @@ queueRouter.get("/", async (_req, res) => {
   res.json({ downloads, slskd });
 });
 
-queueRouter.post("/clear-stalled", (_req, res) => {
-  const cleared = clearStalledDownloads();
+queueRouter.post("/clear-all", (_req, res) => {
+  const cleared = clearAllDownloads();
   res.json({ cleared });
 });

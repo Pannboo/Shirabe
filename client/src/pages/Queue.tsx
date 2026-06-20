@@ -28,16 +28,14 @@ export default function Queue() {
   const { data, loading, reload } = useApi<QueueResponse>(`/api/queue`, [], { pollMs: 5_000 });
   const [clearing, setClearing] = useState(false);
 
-  const stalledCount = (data?.downloads ?? []).filter(
-    (d) => d.status === "queued" || d.status === "searching" || d.status === "downloading",
-  ).length;
+  const totalCount = data?.downloads.length ?? 0;
 
-  async function clearStalled(): Promise<void> {
-    if (stalledCount === 0) return;
-    if (!confirm(`Mark ${stalledCount} stalled download${stalledCount === 1 ? "" : "s"} as failed?`)) return;
+  async function clearAll(): Promise<void> {
+    if (totalCount === 0) return;
+    if (!confirm(`Delete all ${totalCount} download row${totalCount === 1 ? "" : "s"}? This wipes both active and finished history.`)) return;
     setClearing(true);
     try {
-      await api<{ cleared: number }>("/api/queue/clear-stalled", { method: "POST" });
+      await api<{ cleared: number }>("/api/queue/clear-all", { method: "POST" });
       reload();
     } finally {
       setClearing(false);
@@ -50,11 +48,11 @@ export default function Queue() {
         <h2 className="font-serif text-4xl md:text-5xl tracking-tight">Download queue</h2>
         <button
           type="button"
-          onClick={clearStalled}
-          disabled={clearing || stalledCount === 0}
+          onClick={clearAll}
+          disabled={clearing || totalCount === 0}
           className="text-xs px-3 py-1.5 rounded-md border border-border bg-card hover:bg-accent/10 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
         >
-          {clearing ? "Clearing…" : `Clear stalled${stalledCount > 0 ? ` (${stalledCount})` : ""}`}
+          {clearing ? "Clearing…" : `Clear all${totalCount > 0 ? ` (${totalCount})` : ""}`}
         </button>
       </div>
 
