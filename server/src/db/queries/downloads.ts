@@ -73,8 +73,20 @@ export function completeDownload(id: number, downloadPath: string): void {
 // Queue page — clears both stalled (queued/searching/downloading) and
 // finished (complete/failed) rows in one go. slskd's own transfer list
 // is independent; clear those from slskd's UI if you want a full reset.
-const deleteAll = db.prepare(`DELETE FROM downloads`);
+//
+// review_queue.download_id has a FK back into downloads with no cascade,
+// so we have to wipe the review queue in the same transaction or
+// foreign_keys=ON aborts the DELETE. Orphaned review rows have no
+// usable context anyway (the file path is the only thing that survives
+// and we've usually moved on by then).
+const deleteAllReviews = db.prepare(`DELETE FROM review_queue`);
+const deleteAllDownloads = db.prepare(`DELETE FROM downloads`);
 
 export function clearAllDownloads(): number {
-  return deleteAll.run().changes;
+  let cleared = 0;
+  db.transaction(() => {
+    deleteAllReviews.run();
+    cleared = deleteAllDownloads.run().changes;
+  })();
+  return cleared;
 }
