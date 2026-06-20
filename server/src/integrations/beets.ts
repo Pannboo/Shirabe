@@ -27,7 +27,20 @@ const OVERRIDE_PATH = join(tmpdir(), "shirabe-beets-override.yaml");
 mkdirSync(tmpdir(), { recursive: true });
 writeFileSync(
   OVERRIDE_PATH,
-  "import:\n  timid: no\n  quiet_fallback: skip\n",
+  // import.quiet_fallback: asis — when beets isn't confident enough to
+  // auto-pick a MusicBrainz match (multiple close candidates, e.g.
+  // SUPERUNKNOWN with 50 release variants), fall back to importing the
+  // files with their existing tags instead of skipping. Files land in
+  // /music/Library/ either way; tags may be less polished but the
+  // album is usable. Trade made consciously: tag perfection < always
+  // landing the music. The review queue still catches genuine
+  // failures (no match at all, missing files, etc).
+  [
+    "import:",
+    "  timid: no",
+    "  quiet_fallback: asis",
+    "",
+  ].join("\n"),
 );
 
 export interface BeetsResult {
@@ -76,9 +89,18 @@ export async function tryBeetsImport(filePath: string): Promise<BeetsResult> {
     const cleanOut = stripAnsi(stdout);
     const cleanErr = stripAnsi(stderr);
     const confidence = parseConfidence(stdout);
-    const ambiguous = /No matching release|skipping|no good match/i.test(cleanOut + cleanErr);
+
+    // With quiet_fallback: asis the only true failure mode is beets
+    // exiting non-zero (caught in the catch below) or an explicit error
+    // line. "Skipping." no longer appears because asis imports instead.
+    // Anything else is a successful import — either a high-confidence MB
+    // match (Similarity ≥80%) or an asis fallback (no Similarity line).
+    const explicitFailure = /error:|No such file|permission denied/i.test(cleanOut + cleanErr);
+    const ambiguous = confidence > 0 && confidence < 0.8;
+    const ok = !explicitFailure;
+
     return {
-      ok: confidence >= 0.8 && !ambiguous,
+      ok,
       confidence,
       ambiguous,
       stdout: cleanOut,
