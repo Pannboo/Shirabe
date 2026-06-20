@@ -30,6 +30,7 @@ interface SlskdSearchDetail {
 }
 
 interface SlskdDownload {
+  id?: string;
   username: string;
   filename: string;
   state?: string;
@@ -342,6 +343,30 @@ export async function enqueueBestResult(
   const ok = await queueSlskdFiles(best.username, best.files.map((f) => ({ filename: f.filename, size: f.size })));
   if (!ok) return null;
   return { username: best.username, folder: best.folder, fileCount: best.files.length };
+}
+
+// Tell slskd to remove a completed transfer from its list. The `remove`
+// query param distinguishes "cancel an in-flight transfer" (false) from
+// "drop a finished one from history" (true). We only call this for files
+// already in a "Completed, Succeeded" state, so `remove=true` is safe.
+//
+// Best-effort: a 404 means slskd already cleared it (some users have
+// auto-clear enabled); a 5xx will be logged but won't block the
+// download row from being marked complete.
+export async function removeSlskdDownload(username: string, transferId: string): Promise<boolean> {
+  const url = slskdUrl(
+    `/api/v0/transfers/downloads/${encodeURIComponent(username)}/${encodeURIComponent(transferId)}?remove=true`,
+  );
+  if (!url) return false;
+  try {
+    const res = await fetch(url, { method: "DELETE", headers: authHeaders() });
+    if (res.ok || res.status === 404) return true;
+    console.warn(`[slskd] remove transfer ${username}/${transferId} → HTTP ${res.status}`);
+    return false;
+  } catch (err) {
+    console.warn(`[slskd] remove transfer failed`, err instanceof Error ? err.message : err);
+    return false;
+  }
 }
 
 export async function pingSlskd(): Promise<boolean> {

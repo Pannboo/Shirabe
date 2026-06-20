@@ -90,3 +90,13 @@ export function clearAllDownloads(): number {
   })();
   return cleared;
 }
+
+// Single-row delete used by pollDownloads after a successful beets
+// import. Only safe when the row has no review_queue entry pointing at
+// it (beets succeeded → no review row created), otherwise the FK
+// constraint aborts.
+const deleteOne = db.prepare(`DELETE FROM downloads WHERE id = ?`);
+
+export function deleteDownload(id: number): void {
+  deleteOne.run(id);
+}

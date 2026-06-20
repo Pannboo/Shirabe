@@ -1,12 +1,18 @@
-import { basename, join } from "node:path";
+import { join } from "node:path";
 import { config } from "../config.js";
 import {
   completeDownload,
+  deleteDownload,
   listActiveDownloads,
   setDownloadSlskdTarget,
   setDownloadStatus,
 } from "../db/queries/downloads.js";
-import { getSlskdSearch, enqueueBestResult, listSlskdDownloads } from "../integrations/slskd.js";
+import {
+  getSlskdSearch,
+  enqueueBestResult,
+  listSlskdDownloads,
+  removeSlskdDownload,
+} from "../integrations/slskd.js";
 import type { SlskdDownloadGroup } from "../integrations/slskd.js";
 import { organiseDownload } from "./organiseDownloads.js";
 
@@ -80,8 +86,18 @@ function findGroupFor(
 // last path segment of the remote folder). Shirabe's DOWNLOADS_DIR must
 // be the same bind-mounted directory as slskd's `downloads` dir for this
 // to find anything — that's documented in the deployment README.
+//
+// node:path.basename only honours the host OS separator, so on Linux a
+// remote Windows path like "Music\Truxton\HELLHOUND" comes back whole
+// instead of "HELLHOUND". Strip both separators by hand.
+function folderTail(folder: string): string {
+  const trimmed = folder.replace(/[\\/]+$/, "");
+  const sep = Math.max(trimmed.lastIndexOf("\\"), trimmed.lastIndexOf("/"));
+  return sep < 0 ? trimmed : trimmed.slice(sep + 1);
+}
+
 function landingPathFor(folder: string): string {
-  return join(config.DOWNLOADS_DIR, basename(folder.replace(/[\\/]+$/, "")));
+  return join(config.DOWNLOADS_DIR, folderTail(folder));
 }
 
 export async function pollDownloads(): Promise<void> {
@@ -165,7 +181,20 @@ export async function pollDownloads(): Promise<void> {
           `[download] dl#${dl.id} ${dl.artist ?? "?"} — ${dl.title ?? "?"} ` +
           `complete (${group.files.length} files at ${filePath})`,
         );
-        await organiseDownload(dl.id, filePath);
+        const imported = await organiseDownload(dl.id, filePath);
+
+        // Always clear the slskd-side transfers so the user's slskd
+        // download list doesn't grow unbounded. Best-effort per file —
+        // any 404 means it was already cleared upstream.
+        for (const f of group.files) {
+          if (f.id) await removeSlskdDownload(group.username, f.id);
+        }
+
+        // Auto-delete the dl row only when beets actually imported it.
+        // A failed import leaves a review_queue entry whose FK keeps the
+        // row alive anyway, and removing the row would orphan that
+        // context — the user wants to see what went wrong.
+        if (imported) deleteDownload(dl.id);
       } else if (anyErrored) {
         // Partial / cancelled — flag failed so it leaves the active set
         // instead of being re-polled forever.
