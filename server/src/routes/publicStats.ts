@@ -130,9 +130,12 @@ publicStatsRouter.get("/now-playing", async (_req, res) => {
       artist: live.artist,
       album: live.album,
       timestamp: live.timestamp,
-      cover_art_url: live.album_id
-        ? `/api/public/cover-art/${encodeURIComponent(live.album_id)}`
-        : getOrEnqueueCoverArt(live.artist, live.album),
+      // Unified on the image-cache URL for both live and historical
+      // scrobbles — used to branch on live.album_id to a Subsonic-proxy
+      // URL, which meant the cover swapped mid-listen when a track
+      // stopped being "now playing" and became a historical row. Image
+      // cache is the single source of truth.
+      cover_art_url: getOrEnqueueCoverArt(live.artist, live.album),
     });
     return;
   }

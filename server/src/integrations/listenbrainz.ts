@@ -75,6 +75,94 @@ export async function fetchListenBrainzSuggestions(): Promise<ListenBrainzSeed[]
   return seeds;
 }
 
+// === Fresh releases by listened-to artists =================================
+//
+// /user/{user}/fresh_releases returns brand-new albums by artists the user
+// has scrobbled in the past N days. This is the strongest album-discovery
+// signal ListenBrainz exposes — it's not a generic "trending" list, it's
+// keyed to the user's actual listening history.
+//
+// Settings:
+//   days=90 → past three months of releases (LB caps at ~30 for future)
+//   past=true, future=false → only already-released albums (we can't
+//     download something that hasn't dropped yet)
+//   sort=release_date → newest first
+//
+// Filtering: keep Album and EP primary types only. Drops Single (often
+// just a track pulled off an album we'll see anyway), Live, Compilation,
+// Remix, Soundtrack — those rarely match what a user wants surfaced as
+// "new music".
+
+interface LbFreshRelease {
+  artist_credit_name?: string;
+  artist_mbids?: string[];
+  release_date?: string;
+  release_mbid?: string;
+  release_name?: string;
+  release_group_primary_type?: string;
+  release_group_secondary_type?: string;
+}
+
+interface LbFreshReleases {
+  payload?: { releases?: LbFreshRelease[] };
+}
+
+const ALLOWED_PRIMARY = new Set(["Album", "EP"]);
+
+function freshToSeeds(releases: LbFreshRelease[]): ListenBrainzSeed[] {
+  const seeds: ListenBrainzSeed[] = [];
+  const seen = new Set<string>();
+  for (const r of releases) {
+    if (!r.artist_credit_name || !r.release_name) continue;
+    if (r.release_group_primary_type && !ALLOWED_PRIMARY.has(r.release_group_primary_type)) continue;
+    if (r.release_group_secondary_type) continue;
+
+    const key = `${r.artist_credit_name.toLowerCase()}|${r.release_name.toLowerCase()}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+
+    seeds.push({
+      artist: r.artist_credit_name,
+      title: r.release_name,
+      release_mbid: r.release_mbid ?? null,
+      artist_mbid: r.artist_mbids?.[0] ?? null,
+      mode: "album",
+    });
+  }
+  return seeds;
+}
+
+export async function fetchListenBrainzFreshReleases(): Promise<ListenBrainzSeed[]> {
+  const settings = getAllSettings();
+  if (!settings.listenbrainz_username) return [];
+
+  const resp = await lbGet<LbFreshReleases>(
+    `/user/${encodeURIComponent(settings.listenbrainz_username)}/fresh_releases?days=90&past=true&future=false&sort=release_date`,
+    settings.listenbrainz_token || undefined,
+  );
+
+  return freshToSeeds(resp?.payload?.releases ?? []);
+}
+
+// === Catalogue-wide fresh releases ========================================
+//
+// /explore/fresh-releases is the non-user-scoped version of the above —
+// MusicBrainz's full firehose of new releases, not filtered by listening
+// history. DeepCrate-style "what's out this week" discovery. Same payload
+// shape so the filter/normalise pipeline is shared.
+//
+// Capped at the configured days window. LB defaults to a fairly large
+// page; we don't need to paginate for the discovery use-case because
+// later pages quickly tail into noise (region-only one-off releases,
+// label promos, etc.).
+
+export async function fetchListenBrainzAllFreshReleases(days = 30): Promise<ListenBrainzSeed[]> {
+  const resp = await lbGet<LbFreshReleases>(
+    `/explore/fresh-releases?days=${days}&past=true&future=false&sort=release_date`,
+  );
+  return freshToSeeds(resp?.payload?.releases ?? []);
+}
+
 // LB metadata endpoints — used as a fallback when MusicBrainz / Cover Art
 // Archive can't resolve cover art or artist images for a given pair.
 

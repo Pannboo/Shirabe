@@ -79,6 +79,19 @@ runMigrationOnce("invalidate_artist_images_v2_deezer", () => {
 // INSERT OR IGNORE for idempotent re-runs. Existing duplicates are
 // collapsed first (keeping the lowest id) — without that the CREATE
 // UNIQUE INDEX would fail on any DB that already has dupes.
+// 2026-06: suggestionExists used to be case-sensitive, so the same album
+// could land under different casings ("Cacola" vs "cacola") and show up
+// twice on the Discover page. Collapse the existing duplicates here so
+// the post-fix dedupe has a clean slate; the lowest id wins.
+runMigrationOnce("dedupe_suggestions_v1", () => {
+  db.exec(`
+    DELETE FROM suggestions WHERE id NOT IN (
+      SELECT MIN(id) FROM suggestions
+      GROUP BY LOWER(TRIM(artist)), LOWER(TRIM(IFNULL(title, '')))
+    )
+  `);
+});
+
 runMigrationOnce("uniq_scrobbles_v1", () => {
   db.exec(`
     DELETE FROM scrobbles WHERE id NOT IN (

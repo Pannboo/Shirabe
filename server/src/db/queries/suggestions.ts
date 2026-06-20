@@ -13,9 +13,16 @@ const insert = db.prepare(`
   VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
 `);
 
+// LOWER + collapse-whitespace on both sides so "Cacola" / "cacola" /
+// "Cacola " / "Cacola  " all dedupe to one row. Without this, sources
+// emitting slightly different casing (Last.fm tends to title-case
+// everything; ListenBrainz preserves the artist-credit string as-is)
+// produce duplicate suggestion rows even though they're the same album.
+// Suggestion table is small (~hundreds of rows) so the table scan is fine.
 const exists = db.prepare(`
   SELECT 1 FROM suggestions
-  WHERE artist = ? AND IFNULL(title, '') = IFNULL(?, '')
+  WHERE LOWER(TRIM(artist)) = LOWER(TRIM(?))
+    AND LOWER(TRIM(IFNULL(title, ''))) = LOWER(TRIM(IFNULL(?, '')))
     AND (status != 'dismissed' OR dismissed_at > unixepoch() - ? * 86400)
   LIMIT 1
 `);
