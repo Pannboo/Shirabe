@@ -8,7 +8,12 @@ import {
   setSuggestionMode,
   setSuggestionStatus,
 } from "../db/queries/suggestions.js";
-import { insertDownload, setDownloadSearchId, setDownloadStatus } from "../db/queries/downloads.js";
+import {
+  insertDownload,
+  setDownloadSearchId,
+  setDownloadSlskdTarget,
+  setDownloadStatus,
+} from "../db/queries/downloads.js";
 import { isAlbumOwned } from "../db/queries/library.js";
 import { pullSuggestions } from "../jobs/pullSuggestions.js";
 import { syncNavidromeLibrary } from "../jobs/syncNavidromeLibrary.js";
@@ -272,6 +277,19 @@ suggestionsRouter.post("/slskd-queue", async (req, res) => {
     artist: parsed.data.artist ?? null,
     title: parsed.data.title ?? null,
   });
+
+  // Persist slskd correlation target so pollDownloads can match this row
+  // against the live transfer list. Without these the row would sit in
+  // "downloading" forever (no slskd_search_id to drive the state machine,
+  // no username/folder to correlate by). Folder is the parent directory
+  // of any one of the queued files — they should all share the same
+  // folder since that's how Candidate is grouped upstream.
+  const first = parsed.data.files[0];
+  if (first) {
+    const sep = Math.max(first.filename.lastIndexOf("\\"), first.filename.lastIndexOf("/"));
+    const folder = sep < 0 ? "" : first.filename.slice(0, sep);
+    setDownloadSlskdTarget(download.id, parsed.data.username, folder);
+  }
   setDownloadStatus(download.id, "downloading");
   res.json({ download });
 });

@@ -91,13 +91,23 @@ export async function pollDownloads(): Promise<void> {
   const groups = await listSlskdDownloads();
 
   for (const dl of active) {
-    if (!dl.slskd_search_id) continue;
+    // Manual-search rows insert directly into 'downloading' with a
+    // pre-populated (slskd_username, slskd_folder) but no search_id —
+    // the search/auto-pick state machine never runs for them. Only the
+    // queued/searching branch actually needs the search_id; the
+    // downloading branch correlates by username+folder, so it works for
+    // both flows. Silently skipping on !slskd_search_id used to swallow
+    // every manual-search download (bug fixed 2026-06).
+    if ((dl.status === "queued" || dl.status === "searching") && !dl.slskd_search_id) continue;
 
     if (dl.status === "queued" || dl.status === "searching") {
-      const search = await getSlskdSearch(dl.slskd_search_id);
+      // search_id presence already guaranteed by the early-skip above,
+      // but TS doesn't narrow across the conditional — assert with !.
+      const searchId = dl.slskd_search_id!;
+      const search = await getSlskdSearch(searchId);
       if (!search) continue;
       if ((search.responses?.length ?? 0) > 0) {
-        const queued = await enqueueBestResult(dl.slskd_search_id, dl.mode);
+        const queued = await enqueueBestResult(searchId, dl.mode);
         if (queued) {
           // Persist target FIRST so a poll that races the next tick can
           // already correlate. Status flip is the second write.

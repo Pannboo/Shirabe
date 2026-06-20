@@ -1,8 +1,34 @@
 import { exec } from "node:child_process";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { promisify } from "node:util";
 import { config } from "../config.js";
 
 const pexec = promisify(exec);
+
+// ============================================================================
+// Stub override config
+// ============================================================================
+//
+// beets errors out with "can't be both quiet and timid" when the user's
+// config has `import.timid: yes` and we pass `-q` on the command line.
+// Force-import paths need both: -q so the resolver doesn't hang on a
+// prompt, and the user's full library config so files land in the right
+// place with the right rules.
+//
+// Workaround: write a tiny override config at startup that sets
+// `import.timid: no`, and pass it as a *second* `-c` flag. beets stacks
+// configs and the later one wins for any key it defines, so timid flips
+// to no without touching anything else in the user's config.
+// ============================================================================
+
+const OVERRIDE_PATH = join(tmpdir(), "shirabe-beets-override.yaml");
+mkdirSync(tmpdir(), { recursive: true });
+writeFileSync(
+  OVERRIDE_PATH,
+  "import:\n  timid: no\n  quiet_fallback: skip\n",
+);
 
 export interface BeetsResult {
   ok: boolean;
@@ -21,8 +47,10 @@ function parseConfidence(stdout: string): number {
 }
 
 export async function tryBeetsImport(filePath: string): Promise<BeetsResult> {
-  const cfgFlag = config.BEETS_CONFIG ? `-c ${shellQuote(config.BEETS_CONFIG)}` : "";
-  const cmd = `${config.BEETS_BIN} ${cfgFlag} import -q ${shellQuote(filePath)}`;
+  const userCfg = config.BEETS_CONFIG ? `-c ${shellQuote(config.BEETS_CONFIG)}` : "";
+  // Override goes last so it wins over the user's timid setting.
+  const overrideCfg = `-c ${shellQuote(OVERRIDE_PATH)}`;
+  const cmd = `${config.BEETS_BIN} ${userCfg} ${overrideCfg} import -q ${shellQuote(filePath)}`;
   try {
     const { stdout, stderr } = await pexec(cmd, { timeout: 120000, maxBuffer: 5 * 1024 * 1024 });
     const confidence = parseConfidence(stdout);
