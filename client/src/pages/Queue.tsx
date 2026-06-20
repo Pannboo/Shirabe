@@ -27,6 +27,7 @@ interface QueueResponse {
 export default function Queue() {
   const { data, loading, reload } = useApi<QueueResponse>(`/api/queue`, [], { pollMs: 5_000 });
   const [clearing, setClearing] = useState(false);
+  const [clearError, setClearError] = useState<string | null>(null);
 
   const totalCount = data?.downloads.length ?? 0;
 
@@ -34,9 +35,15 @@ export default function Queue() {
     if (totalCount === 0) return;
     if (!confirm(`Delete all ${totalCount} download row${totalCount === 1 ? "" : "s"}? This wipes both active and finished history.`)) return;
     setClearing(true);
+    setClearError(null);
     try {
-      await api<{ cleared: number }>("/api/queue/clear-all", { method: "POST" });
+      const { cleared } = await api<{ cleared: number }>("/api/queue/clear-all", { method: "POST" });
+      console.log(`[queue] cleared ${cleared} download rows`);
       reload();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setClearError(msg);
+      console.error("[queue] clear-all failed", err);
     } finally {
       setClearing(false);
     }
@@ -46,14 +53,19 @@ export default function Queue() {
     <div className="space-y-6">
       <div className="flex items-end justify-between gap-4">
         <h2 className="font-serif text-4xl md:text-5xl tracking-tight">Download queue</h2>
-        <button
-          type="button"
-          onClick={clearAll}
-          disabled={clearing || totalCount === 0}
-          className="text-xs px-3 py-1.5 rounded-md border border-border bg-card hover:bg-accent/10 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-        >
-          {clearing ? "Clearing…" : `Clear all${totalCount > 0 ? ` (${totalCount})` : ""}`}
-        </button>
+        <div className="flex flex-col items-end gap-1">
+          <button
+            type="button"
+            onClick={clearAll}
+            disabled={clearing || totalCount === 0}
+            className="text-xs px-3 py-1.5 rounded-md border border-border bg-card hover:bg-accent/10 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+          >
+            {clearing ? "Clearing…" : `Clear all${totalCount > 0 ? ` (${totalCount})` : ""}`}
+          </button>
+          {clearError && (
+            <p className="text-xs text-red-400 max-w-xs text-right">Clear failed: {clearError}</p>
+          )}
+        </div>
       </div>
 
       <section>
