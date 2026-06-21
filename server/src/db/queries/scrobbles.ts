@@ -1,9 +1,17 @@
 import { db } from "../client.js";
 import type { Scrobble } from "../../types/domain.js";
 
+// INSERT OR IGNORE so a Navidrome retry (or any other client re-POSTing the
+// same listen after a flap) is a no-op instead of throwing a UNIQUE-constraint
+// error against uniq_scrobble and crashing the process.
 const insert = db.prepare(`
-  INSERT INTO scrobbles (user_id, track, artist, album, timestamp, source_client)
+  INSERT OR IGNORE INTO scrobbles (user_id, track, artist, album, timestamp, source_client)
   VALUES (?, ?, ?, ?, ?, ?)
+`);
+
+const byUniq = db.prepare(`
+  SELECT * FROM scrobbles
+  WHERE user_id = ? AND artist = ? AND track = ? AND timestamp = ?
 `);
 
 // Used by the history-import flow. INSERT OR IGNORE so re-runs (or
@@ -40,6 +48,11 @@ const latestByUser = db.prepare(`
 
 const byId = db.prepare(`SELECT * FROM scrobbles WHERE id = ?`);
 
+export interface InsertScrobbleResult {
+  scrobble: Scrobble;
+  inserted: boolean;
+}
+
 export function insertScrobble(
   userId: number,
   track: string,
@@ -47,9 +60,14 @@ export function insertScrobble(
   album: string | null,
   timestamp: number,
   sourceClient: string | null,
-): Scrobble {
+): InsertScrobbleResult {
   const result = insert.run(userId, track, artist, album, timestamp, sourceClient);
-  return byId.get(result.lastInsertRowid) as Scrobble;
+  if (result.changes > 0) {
+    return { scrobble: byId.get(result.lastInsertRowid) as Scrobble, inserted: true };
+  }
+  // Duplicate against uniq_scrobble — return the existing row so callers can
+  // still decide what to do (we skip relay dispatch for dupes).
+  return { scrobble: byUniq.get(userId, artist, track, timestamp) as Scrobble, inserted: false };
 }
 
 export function markRelayed(id: number, target: "lastfm" | "listenbrainz"): void {

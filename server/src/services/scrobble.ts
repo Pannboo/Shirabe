@@ -14,7 +14,7 @@ export interface IncomingScrobble {
 }
 
 export async function ingestScrobble(input: IncomingScrobble): Promise<Scrobble> {
-  const scrobble = insertScrobble(
+  const { scrobble, inserted } = insertScrobble(
     input.user_id,
     input.track,
     input.artist,
@@ -22,7 +22,13 @@ export async function ingestScrobble(input: IncomingScrobble): Promise<Scrobble>
     input.timestamp,
     input.source_client,
   );
-  await dispatchRelays(scrobble);
+  if (inserted) {
+    await dispatchRelays(scrobble);
+  } else {
+    console.warn(
+      `[lb-intake] duplicate listen ignored user=${input.user_id} ts=${input.timestamp} "${input.artist} — ${input.track}"`,
+    );
+  }
   return scrobble;
 }
 
