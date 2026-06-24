@@ -67,6 +67,27 @@ services:
     depends_on:
       - flaresolverr
 
+  # Discord bot exposing `/nowplaying` as a user-installable slash command.
+  # Reaches Shirabe via the internal docker network — no public exposure
+  # of the server needed for this to work in any chat/DM/server.
+  # First-time only: `docker compose run --rm discord-bot npm run register`
+  # to publish the slash command to Discord (idempotent; safe to re-run).
+  discord-bot:
+    build:
+      context: .
+      dockerfile: discord-bot/Dockerfile
+    container_name: shirabe-discord-bot
+    restart: unless-stopped
+    environment:
+      DISCORD_APP_ID: ${DISCORD_APP_ID:?set DISCORD_APP_ID in .env}
+      DISCORD_BOT_TOKEN: ${DISCORD_BOT_TOKEN:?set DISCORD_BOT_TOKEN in .env}
+      SHIRABE_URL: http://shirabe:3000
+      # Used only for cover-art URLs in the embed — Discord's image proxy
+      # needs a URL it can reach. Leave unset to skip thumbnails.
+      SHIRABE_PUBLIC_URL: ${SHIRABE_PUBLIC_URL:-}
+    depends_on:
+      - shirabe
+
   # Headless-browser proxy that resolves Cloudflare challenge pages so the
   # RYM and AOTY scraper sources can actually return results. After first
   # boot, paste `http://flaresolverr:8191/v1` into Shirabe → Settings →

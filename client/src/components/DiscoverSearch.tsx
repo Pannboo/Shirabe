@@ -34,6 +34,7 @@ interface CandidateFile {
   sampleRate: number | null;
   length: number | null;
   extension: string;
+  is_audio: boolean;
 }
 
 interface Candidate {
@@ -47,6 +48,9 @@ interface Candidate {
   formats: string[];
   isLossless: boolean;
   avgBitrate: number | null;
+  audio_count: number;
+  extra_count: number;
+  folder_expanded: boolean;
 }
 
 interface Track {
@@ -582,7 +586,10 @@ function CandidateCard({ candidate, onGrab }: { candidate: Candidate; onGrab: ()
         )}
         <span>{candidate.formats.join(", ")}</span>
         <span>·</span>
-        <span>{candidate.files.length} files</span>
+        <span>
+          {candidate.audio_count} audio
+          {candidate.extra_count > 0 && ` + ${candidate.extra_count} extras`}
+        </span>
         <span>·</span>
         <span>{fmtBytes(candidate.totalSize)}</span>
         <span>·</span>
@@ -593,12 +600,12 @@ function CandidateCard({ candidate, onGrab }: { candidate: Candidate; onGrab: ()
       {visibleFiles.length > 0 && (
         <ul className="text-[11px] divide-y divide-border/60 border-t border-border/60 pt-1">
           {visibleFiles.map((f, i) => (
-            <li key={i} className="py-1 flex items-center gap-2">
+            <li key={i} className={cn("py-1 flex items-center gap-2", !f.is_audio && "opacity-60")}>
               <span className="flex-1 truncate font-mono text-muted-foreground">{baseName(f.filename)}</span>
               <span className="uppercase tracking-wider text-[10px] text-muted-foreground w-10 text-right">
                 {f.extension}
               </span>
-              <span className="tabular-nums text-foreground w-20 text-right">{fileQualityLabel(f)}</span>
+              <span className="tabular-nums text-foreground w-20 text-right">{f.is_audio ? fileQualityLabel(f) : "extra"}</span>
               <span className="tabular-nums text-muted-foreground w-14 text-right">{fmtBytes(f.size)}</span>
             </li>
           ))}

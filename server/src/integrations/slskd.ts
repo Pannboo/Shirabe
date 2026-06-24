@@ -52,6 +52,21 @@ export interface SlskdDownloadGroup {
 // user has download_lossless_only set, anything else is rejected.
 const LOSSLESS_EXTS = new Set(["flac", "wav", "alac", "aiff", "ape", "wv"]);
 
+// All audio extensions slskd might return. Files outside this set are either
+// extras (cover art, lyrics — see EXTRA_EXTS) or junk we don't want to surface.
+const AUDIO_EXTS = new Set(["flac", "mp3", "m4a", "ogg", "opus", "wav", "alac", "aiff", "ape", "wv", "mp2", "wma"]);
+
+// Album extras: artwork, lyrics, log/cue/playlist/info. We surface these
+// alongside audio when expanding a candidate's folder so the user ends up
+// with a complete album folder, not just the tracks slskd's search query
+// happened to match. Soulseek searches do AND-token matching on the path,
+// so tracks credited to individual artists (not the album artist) often
+// don't appear in search results even though they sit in the same folder.
+const EXTRA_EXTS = new Set([
+  "jpg", "jpeg", "png", "gif", "webp", "bmp", "tiff",
+  "lrc", "cue", "log", "m3u", "m3u8", "nfo", "txt", "pdf", "sfv", "md5",
+]);
+
 function authHeaders(): Record<string, string> {
   const { slskd_api_key } = getAllSettings();
   return slskd_api_key ? { "X-API-Key": slskd_api_key } : {};
@@ -135,6 +150,7 @@ export interface CandidateFile {
   sampleRate: number | null;
   length: number | null;
   extension: string;
+  is_audio: boolean;
 }
 
 export interface Candidate {
@@ -148,6 +164,12 @@ export interface Candidate {
   formats: string[];
   isLossless: boolean;
   avgBitrate: number | null;
+  audio_count: number;
+  extra_count: number;
+  // True once expandCandidateFolders has successfully browsed this peer's
+  // folder. Lets the UI distinguish "we know there are 21 tracks + 8 extras"
+  // from "search-hit count, may be incomplete".
+  folder_expanded: boolean;
 }
 
 function extOf(name: string): string {
@@ -225,10 +247,6 @@ export function rankCandidates(
   const filter = activeFilter();
   const candidates: Candidate[] = [];
 
-  // Loose mode still drops obviously non-audio extensions (videos, images,
-  // archives) — pointless to show .mkv when the user is downloading music.
-  const audioExts = new Set(["flac", "mp3", "m4a", "ogg", "opus", "wav", "alac", "aiff", "ape", "wv", "mp2", "wma"]);
-
   let totalPeers = 0;
   let totalFiles = 0;
 
@@ -238,7 +256,7 @@ export function rankCandidates(
 
     const audioOnly = response.files.filter((f) => {
       const ext = extOf(f.filename);
-      return ext && audioExts.has(ext);
+      return ext && AUDIO_EXTS.has(ext);
     });
     totalFiles += audioOnly.length;
     if (audioOnly.length === 0) continue;
@@ -281,11 +299,15 @@ export function rankCandidates(
           sampleRate: f.sampleRate ?? null,
           length: f.length ?? null,
           extension: extOf(f.filename),
+          is_audio: true,
         })),
         totalSize,
         formats: exts,
         isLossless,
         avgBitrate,
+        audio_count: files.length,
+        extra_count: 0,
+        folder_expanded: false,
       });
     }
   }
@@ -303,6 +325,134 @@ function score(c: Candidate): number {
   s += Math.min(c.uploadSpeed / 1024, 50);
   s += Math.min(c.files.length, 25);
   return s;
+}
+
+// === Peer folder browse =====================================================
+//
+// slskd's search results only return files whose path tokens AND-match the
+// query, so an album folder with 30 files might show up as 13 hits when the
+// query is "Artist Album" and several tracks are credited to other artists.
+// Soulseek's per-user directory endpoint gives us the *complete* folder
+// listing — every track plus extras (cover.jpg, .lrc, .cue, .log) — which we
+// merge into the candidate so Grab queues the whole album folder.
+
+interface SlskdDirectoryFile extends SlskdFile {
+  // Some slskd builds return basename-only here; others return the full path.
+  // We normalise to full path against the requested directory.
+}
+
+interface SlskdDirectoryResponse {
+  name?: string;
+  files?: SlskdDirectoryFile[];
+}
+
+function joinFolderPath(directory: string, name: string): string {
+  if (!directory) return name;
+  if (name.includes("\\") || name.includes("/")) return name;
+  const sep = directory.includes("\\") ? "\\" : "/";
+  return `${directory}${sep}${name}`;
+}
+
+export async function getSlskdUserDirectory(
+  username: string,
+  directory: string,
+): Promise<SlskdFile[] | null> {
+  const url = slskdUrl(`/api/v0/users/${encodeURIComponent(username)}/directory`);
+  if (!url) return null;
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      body: JSON.stringify({ directory }),
+    });
+    if (!res.ok) return null;
+    const data = (await res.json()) as SlskdDirectoryResponse;
+    return (data.files ?? []).map((f) => ({
+      ...f,
+      filename: joinFolderPath(directory, f.filename),
+    }));
+  } catch {
+    return null;
+  }
+}
+
+// Replace a candidate's `files` with the FULL folder listing from slskd's
+// per-user directory endpoint. Audio files still pass the quality filter
+// (we don't want lossy junk leaking in when the user asked for lossless);
+// extras (cover art, lyrics, cue/log/playlist) are always included.
+//
+// Best-effort: if the browse fails (peer offline, slow, etc.) we keep the
+// original search-hit files and leave `folder_expanded` false so the UI
+// can still display something sensible.
+export async function expandCandidateFolder(
+  candidate: Candidate,
+  opts: { strict?: boolean } = {},
+): Promise<Candidate> {
+  if (!candidate.folder) return candidate;
+  const dirFiles = await getSlskdUserDirectory(candidate.username, candidate.folder);
+  if (!dirFiles || dirFiles.length === 0) return candidate;
+
+  const strict = opts.strict !== false;
+  const filter = activeFilter();
+  const audioFiles: SlskdFile[] = [];
+  const extraFiles: SlskdFile[] = [];
+
+  for (const f of dirFiles) {
+    const ext = extOf(f.filename);
+    if (!ext) continue;
+    if (AUDIO_EXTS.has(ext)) {
+      if (strict && !passesFileFilter(f, filter)) continue;
+      audioFiles.push(f);
+    } else if (EXTRA_EXTS.has(ext)) {
+      extraFiles.push(f);
+    }
+  }
+
+  if (audioFiles.length === 0) return candidate;
+
+  const allFiles = [...audioFiles, ...extraFiles];
+  const totalSize = allFiles.reduce((s, f) => s + (f.size ?? 0), 0);
+  const audioExtsList = Array.from(new Set(audioFiles.map((f) => extOf(f.filename))));
+  const isLossless = audioExtsList.every((e) => LOSSLESS_EXTS.has(e));
+  const bitrates = audioFiles.map((f) => f.bitRate ?? 0).filter((b) => b > 0);
+  const avgBitrate = bitrates.length > 0
+    ? Math.round(bitrates.reduce((s, b) => s + b, 0) / bitrates.length)
+    : null;
+
+  return {
+    ...candidate,
+    files: allFiles.map<CandidateFile>((f) => ({
+      filename: f.filename,
+      size: f.size,
+      bitRate: f.bitRate ?? null,
+      bitDepth: f.bitDepth ?? null,
+      sampleRate: f.sampleRate ?? null,
+      length: f.length ?? null,
+      extension: extOf(f.filename),
+      is_audio: AUDIO_EXTS.has(extOf(f.filename)),
+    })),
+    totalSize,
+    formats: audioExtsList,
+    isLossless,
+    avgBitrate,
+    audio_count: audioFiles.length,
+    extra_count: extraFiles.length,
+    folder_expanded: true,
+  };
+}
+
+// Expand the top N candidates in parallel. Bounded so a search with 50 peers
+// doesn't fire 50 directory requests at slskd. The UI only shows the top
+// candidates anyway — anything past N is unlikely to be picked.
+export async function expandCandidateFolders(
+  candidates: Candidate[],
+  opts: { strict?: boolean; limit?: number } = {},
+): Promise<Candidate[]> {
+  const limit = opts.limit ?? 10;
+  const head = candidates.slice(0, limit);
+  const tail = candidates.slice(limit);
+  const expanded = await Promise.all(head.map((c) => expandCandidateFolder(c, opts)));
+  return [...expanded, ...tail];
 }
 
 // === Queue ====================================================================
@@ -340,9 +490,15 @@ export async function enqueueBestResult(
   const { candidates } = rankCandidates(search, { mode, strict: true });
   const best = candidates[0];
   if (!best) return null;
-  const ok = await queueSlskdFiles(best.username, best.files.map((f) => ({ filename: f.filename, size: f.size })));
+  // Album mode: pull the full folder so cover art / lyrics / log come down
+  // with the audio. Track mode skips this — we're only grabbing one file.
+  const expanded = mode === "album" ? await expandCandidateFolder(best, { strict: true }) : best;
+  const ok = await queueSlskdFiles(
+    expanded.username,
+    expanded.files.map((f) => ({ filename: f.filename, size: f.size })),
+  );
   if (!ok) return null;
-  return { username: best.username, folder: best.folder, fileCount: best.files.length };
+  return { username: expanded.username, folder: expanded.folder, fileCount: expanded.files.length };
 }
 
 // Tell slskd to remove a completed transfer from its list. The `remove`

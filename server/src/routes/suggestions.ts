@@ -18,6 +18,7 @@ import { isAlbumOwned } from "../db/queries/library.js";
 import { pullSuggestions } from "../jobs/pullSuggestions.js";
 import { syncNavidromeLibrary } from "../jobs/syncNavidromeLibrary.js";
 import {
+  expandCandidateFolders,
   getSlskdSearch,
   queueSlskdFiles,
   rankCandidates,
@@ -220,9 +221,16 @@ suggestionsRouter.post("/slskd-preview", async (req, res) => {
   const ranked = detail
     ? rankCandidates(detail, { mode, strict: true })
     : { candidates: [], total_peers: 0, total_files: 0 };
+  // Expand the visible candidates' folders so the UI shows real file counts
+  // (and Grab queues the full folder including cover art / lyrics). Skip for
+  // track mode — we're only picking a single file, browsing is wasted work.
+  const visible = ranked.candidates.slice(0, 15);
+  const expanded = mode === "album"
+    ? await expandCandidateFolders(visible, { strict: true })
+    : visible;
   res.json({
     search_id: searchId,
-    candidates: ranked.candidates.slice(0, 15),
+    candidates: expanded,
     total_peers: ranked.total_peers,
     total_files: ranked.total_files,
     complete: !!detail?.isComplete,
@@ -238,9 +246,13 @@ suggestionsRouter.get("/slskd-search/:id", async (req, res) => {
     return;
   }
   const ranked = rankCandidates(detail, { mode, strict });
+  const visible = ranked.candidates.slice(0, 30);
+  const expanded = mode === "album"
+    ? await expandCandidateFolders(visible, { strict, limit: 15 })
+    : visible;
   res.json({
     search_id: req.params.id,
-    candidates: ranked.candidates.slice(0, 30),
+    candidates: expanded,
     total_peers: ranked.total_peers,
     total_files: ranked.total_files,
     complete: !!detail.isComplete,

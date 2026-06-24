@@ -4,7 +4,9 @@
   "version": "0.1.0",
   "workspaces": [
     "server",
-    "client"
+    "client",
+    "discord-bot",
+    "discord-rpc"
   ],
   "scripts": {
     "dev": "node scripts/dev.mjs",
