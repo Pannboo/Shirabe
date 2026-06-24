@@ -68,6 +68,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
       ? `${publicBase.replace(/\/$/, "")}/track/${encodeURIComponent(np.artist)}/${encodeURIComponent(np.track)}`
       : null;
     const lastfmUrl = `https://www.last.fm/music/${encodeURIComponent(np.artist)}/_/${encodeURIComponent(np.track)}`;
+    const searchQuery = encodeURIComponent(`${np.artist} ${np.track}`);
+    const spotifyUrl = `https://open.spotify.com/search/${searchQuery}`;
+    const ytMusicUrl = `https://music.youtube.com/search?q=${searchQuery}`;
 
     const liveLine = np.is_live
       ? `▶ Live · started ${time(np.timestamp, TimestampStyles.RelativeTime)}`
@@ -90,7 +93,15 @@ client.on(Events.InteractionCreate, async (interaction) => {
     const buttons = new ActionRowBuilder<ButtonBuilder>().addComponents(
       new ButtonBuilder()
         .setStyle(ButtonStyle.Link)
-        .setLabel("Lookup on Last.fm")
+        .setLabel("Spotify")
+        .setURL(spotifyUrl),
+      new ButtonBuilder()
+        .setStyle(ButtonStyle.Link)
+        .setLabel("YouTube Music")
+        .setURL(ytMusicUrl),
+      new ButtonBuilder()
+        .setStyle(ButtonStyle.Link)
+        .setLabel("Last.fm")
         .setURL(lastfmUrl),
     );
     if (shirabeTrackUrl) {
