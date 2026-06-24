@@ -1,3 +1,4 @@
+<img width="435" height="532" alt="image" src="https://github.com/user-attachments/assets/dee80ed2-c9e0-4d94-b74d-ecde64a42c6e" />
 # Shirabe
 
 Self-hosted music curator and scrobbler. Public Koito-style stats dashboard at `/`, private curator tools (discovery → slskd → beets → review) behind Navidrome-backed auth, and a ListenBrainz-compatible scrobble intake that relays to Last.fm + ListenBrainz.
