@@ -1,18 +1,32 @@
 import "dotenv/config";
 import {
+  ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle,
   Client,
-  EmbedBuilder,
+  ContainerBuilder,
   Events,
   GatewayIntentBits,
   MessageFlags,
+  SectionBuilder,
+  SeparatorBuilder,
+  SeparatorSpacingSize,
+  TextDisplayBuilder,
+  ThumbnailBuilder,
+  time,
+  TimestampStyles,
 } from "discord.js";
 import { getNowPlaying } from "./shirabeClient.js";
+import { getDominantColor } from "./coverColor.js";
 
 const token = process.env.DISCORD_BOT_TOKEN;
 if (!token) {
   console.error("DISCORD_BOT_TOKEN must be set");
   process.exit(1);
 }
+
+const internalBase = process.env.SHIRABE_URL ?? "http://server:3000";
+const publicBase = process.env.SHIRABE_PUBLIC_URL; // optional, for Discord-visible URLs
 
 const client = new Client({ intents: [GatewayIntentBits.Guilds] });
 
@@ -36,22 +50,78 @@ client.on(Events.InteractionCreate, async (interaction) => {
       return;
     }
 
-    const title = np.is_live ? "Now playing" : "Last played";
-    const embed = new EmbedBuilder()
-      .setTitle(title)
-      .setDescription(`**${np.track}**\n${np.artist} — *${np.album}*`)
-      .setTimestamp(np.timestamp * 1000);
+    // Color sampling uses the internal URL so it works on LAN-only setups.
+    const internalCover = np.cover_art_url
+      ? new URL(np.cover_art_url, internalBase).toString()
+      : null;
+    const accent = internalCover
+      ? await getDominantColor(internalCover)
+      : 0x8a6e5c;
 
-    // Cover URLs from Shirabe are relative; resolve against the public
-    // base so Discord's image proxy can actually fetch them. Internal
-    // docker URLs won't render — set SHIRABE_PUBLIC_URL to a URL Discord
-    // can reach.
-    const publicBase = process.env.SHIRABE_PUBLIC_URL;
-    if (np.cover_art_url && publicBase) {
-      embed.setThumbnail(new URL(np.cover_art_url, publicBase).toString());
+    // Discord-visible URLs need to be publicly resolvable; without a public
+    // base, we skip the thumbnail and the in-Shirabe link.
+    const publicCover =
+      publicBase && np.cover_art_url
+        ? new URL(np.cover_art_url, publicBase).toString()
+        : null;
+    const shirabeTrackUrl = publicBase
+      ? `${publicBase.replace(/\/$/, "")}/track/${encodeURIComponent(np.artist)}/${encodeURIComponent(np.track)}`
+      : null;
+    const lastfmUrl = `https://www.last.fm/music/${encodeURIComponent(np.artist)}/_/${encodeURIComponent(np.track)}`;
+
+    const liveLine = np.is_live
+      ? `▶ Live · started ${time(np.timestamp, TimestampStyles.RelativeTime)}`
+      : `⏸ Last played ${time(np.timestamp, TimestampStyles.RelativeTime)}`;
+
+    const section = new SectionBuilder().addTextDisplayComponents(
+      new TextDisplayBuilder().setContent(
+        `## ${np.track}\nby **${np.artist}**\non *${np.album}*`,
+      ),
+    );
+
+    if (publicCover) {
+      section.setThumbnailAccessory(
+        new ThumbnailBuilder()
+          .setURL(publicCover)
+          .setDescription(`${np.album} cover art`),
+      );
     }
 
-    await interaction.editReply({ embeds: [embed] });
+    const buttons = new ActionRowBuilder<ButtonBuilder>().addComponents(
+      new ButtonBuilder()
+        .setStyle(ButtonStyle.Link)
+        .setLabel("Lookup on Last.fm")
+        .setURL(lastfmUrl),
+    );
+    if (shirabeTrackUrl) {
+      buttons.addComponents(
+        new ButtonBuilder()
+          .setStyle(ButtonStyle.Link)
+          .setLabel("Open in Shirabe")
+          .setURL(shirabeTrackUrl),
+      );
+    }
+
+    const container = new ContainerBuilder()
+      .setAccentColor(accent)
+      .addTextDisplayComponents(
+        new TextDisplayBuilder().setContent(
+          `-# ♪ Shirabe · ${np.is_live ? "Now Playing" : "Recently Played"}`,
+        ),
+      )
+      .addSectionComponents(section)
+      .addSeparatorComponents(
+        new SeparatorBuilder().setSpacing(SeparatorSpacingSize.Small),
+      )
+      .addTextDisplayComponents(
+        new TextDisplayBuilder().setContent(`-# ${liveLine}`),
+      )
+      .addActionRowComponents(buttons);
+
+    await interaction.editReply({
+      flags: MessageFlags.IsComponentsV2,
+      components: [container],
+    });
   } catch (err) {
     console.error("nowplaying failed", err);
     await interaction.editReply("Couldn't reach Shirabe right now.");
