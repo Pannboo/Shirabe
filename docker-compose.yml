@@ -85,6 +85,10 @@ services:
       # Used only for cover-art URLs in the embed — Discord's image proxy
       # needs a URL it can reach. Leave unset to skip thumbnails.
       SHIRABE_PUBLIC_URL: ${SHIRABE_PUBLIC_URL:-}
+      EMOJI_SPOTIFY: ${EMOJI_SPOTIFY:-}
+      EMOJI_YTM: ${EMOJI_YTM:-}
+      EMOJI_LASTFM: ${EMOJI_LASTFM:-}
+      EMOJI_SHIRABE: ${EMOJI_SHIRABE:-}
     depends_on:
       - shirabe
 

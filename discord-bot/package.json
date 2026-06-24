@@ -10,6 +10,8 @@
     "start": "node dist/index.js",
     "register": "node dist/registerCommands.js",
     "register:dev": "tsx src/registerCommands.ts",
+    "upload-emojis": "node dist/uploadEmojis.js",
+    "upload-emojis:dev": "tsx src/uploadEmojis.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {

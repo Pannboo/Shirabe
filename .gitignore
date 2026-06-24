@@ -17,3 +17,7 @@ client/dist/
 # Per-instance integration data (created by compose)
 slskd/
 navidrome/
+
+# Brand-logo PNGs for discord-bot app emojis — user-supplied, not for the repo
+discord-bot/emojis/*
+!discord-bot/emojis/.gitkeep

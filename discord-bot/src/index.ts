@@ -28,6 +28,31 @@ if (!token) {
 const internalBase = process.env.SHIRABE_URL ?? "http://server:3000";
 const publicBase = process.env.SHIRABE_PUBLIC_URL; // optional, for Discord-visible URLs
 
+// Optional app emoji on each button. Env value format: `<id>:<name>`,
+// produced by `npm run upload-emojis`. Missing values fall back to label-only.
+function parseEmoji(value: string | undefined): { id: string; name: string } | null {
+  if (!value) return null;
+  const [id, name] = value.split(":");
+  if (!id || !name) return null;
+  return { id, name };
+}
+const emoji = {
+  spotify: parseEmoji(process.env.EMOJI_SPOTIFY),
+  youtubeMusic: parseEmoji(process.env.EMOJI_YTM),
+  lastfm: parseEmoji(process.env.EMOJI_LASTFM),
+  shirabe: parseEmoji(process.env.EMOJI_SHIRABE),
+};
+
+function linkButton(
+  label: string,
+  url: string,
+  icon: { id: string; name: string } | null,
+): ButtonBuilder {
+  const b = new ButtonBuilder().setStyle(ButtonStyle.Link).setLabel(label).setURL(url);
+  if (icon) b.setEmoji(icon);
+  return b;
+}
+
 const client = new Client({ intents: [GatewayIntentBits.Guilds] });
 
 client.once(Events.ClientReady, (c) => {
@@ -91,25 +116,13 @@ client.on(Events.InteractionCreate, async (interaction) => {
     }
 
     const buttons = new ActionRowBuilder<ButtonBuilder>().addComponents(
-      new ButtonBuilder()
-        .setStyle(ButtonStyle.Link)
-        .setLabel("Spotify")
-        .setURL(spotifyUrl),
-      new ButtonBuilder()
-        .setStyle(ButtonStyle.Link)
-        .setLabel("YouTube Music")
-        .setURL(ytMusicUrl),
-      new ButtonBuilder()
-        .setStyle(ButtonStyle.Link)
-        .setLabel("Last.fm")
-        .setURL(lastfmUrl),
+      linkButton("Spotify", spotifyUrl, emoji.spotify),
+      linkButton("YouTube Music", ytMusicUrl, emoji.youtubeMusic),
+      linkButton("Last.fm", lastfmUrl, emoji.lastfm),
     );
     if (shirabeTrackUrl) {
       buttons.addComponents(
-        new ButtonBuilder()
-          .setStyle(ButtonStyle.Link)
-          .setLabel("Open in Shirabe")
-          .setURL(shirabeTrackUrl),
+        linkButton("Open in Shirabe", shirabeTrackUrl, emoji.shirabe),
       );
     }
 
