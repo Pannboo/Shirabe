@@ -5,6 +5,8 @@ export type NowPlaying = {
   album: string;
   timestamp: number;
   cover_art_url: string;
+  duration: number | null;
+  started_at: number;
 };
 
 const baseUrl = process.env.SHIRABE_URL ?? "http://server:3000";

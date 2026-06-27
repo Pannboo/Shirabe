@@ -18,6 +18,7 @@ export interface NowPlayingState {
   started_at: number;
   album_id: string | null;
   enriched_at: number | null;
+  duration: number | null;
 }
 
 interface Row {
@@ -29,13 +30,14 @@ interface Row {
   started_at: number;
   album_id: string | null;
   enriched_at: number | null;
+  duration: number | null;
 }
 
 const getStmt = db.prepare(`SELECT * FROM now_playing WHERE user_id = ?`);
 const upsertStmt = db.prepare(`
   INSERT INTO now_playing
-    (user_id, artist, track, album, timestamp, started_at, album_id, enriched_at)
-  VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    (user_id, artist, track, album, timestamp, started_at, album_id, enriched_at, duration)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
   ON CONFLICT(user_id) DO UPDATE SET
     artist = excluded.artist,
     track = excluded.track,
@@ -43,7 +45,8 @@ const upsertStmt = db.prepare(`
     timestamp = excluded.timestamp,
     started_at = excluded.started_at,
     album_id = excluded.album_id,
-    enriched_at = excluded.enriched_at
+    enriched_at = excluded.enriched_at,
+    duration = excluded.duration
 `);
 const deleteStmt = db.prepare(`DELETE FROM now_playing WHERE user_id = ?`);
 
@@ -58,6 +61,7 @@ function readRow(userId: number): NowPlayingState | null {
     started_at: row.started_at,
     album_id: row.album_id,
     enriched_at: row.enriched_at,
+    duration: row.duration,
   };
 }
 
@@ -71,6 +75,7 @@ function writeRow(userId: number, s: NowPlayingState): void {
     s.started_at,
     s.album_id,
     s.enriched_at,
+    s.duration,
   );
 }
 
@@ -91,6 +96,7 @@ export function setNowPlaying(
     started_at: sameTrack ? existing.started_at : now,
     album_id: sameTrack ? existing.album_id : null,
     enriched_at: sameTrack ? existing.enriched_at : null,
+    duration: sameTrack ? existing.duration : null,
   });
 }
 
@@ -100,7 +106,15 @@ export function getNowPlaying(
 ): NowPlayingState | null {
   const cur = readRow(userId);
   if (!cur) return null;
-  if (Math.floor(Date.now() / 1000) - cur.timestamp > windowSeconds) {
+  const now = Math.floor(Date.now() / 1000);
+  // Heartbeat-based expiry: drop if no `playing_now` in windowSeconds.
+  // Duration-based extension: when we know the track length, keep the
+  // row alive at least until started_at + duration + grace, since many
+  // players only send one playing_now at track start. Without this, a
+  // 100-minute song silently ages out after windowSeconds.
+  const heartbeatExpiry = cur.timestamp + windowSeconds;
+  const durationExpiry = cur.duration ? cur.started_at + cur.duration + windowSeconds : 0;
+  if (now > Math.max(heartbeatExpiry, durationExpiry)) {
     deleteStmt.run(userId);
     return null;
   }
@@ -139,6 +153,7 @@ export async function enrichWithSubsonic(
     ...cur,
     album_id: match.albumId ?? cur.album_id,
     enriched_at: now,
+    duration: match.duration ?? cur.duration,
   };
   writeRow(userId, next);
   return next;

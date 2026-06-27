@@ -1,9 +1,33 @@
+import { useEffect, useState } from "react";
 import { useNowPlaying } from "@/hooks/useNowPlaying";
 import { formatRelative } from "@/lib/format";
 
+function mmss(secs: number): string {
+  const s = Math.max(0, Math.floor(secs));
+  return `${Math.floor(s / 60)}:${(s % 60).toString().padStart(2, "0")}`;
+}
+
 export default function NowPlaying() {
   const data = useNowPlaying();
+  // Tick once a second so the progress bar advances smoothly between the
+  // 5-second now-playing polls.
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    if (!data?.is_live || !data.duration) return;
+    const id = setInterval(() => setTick((t) => t + 1), 1000);
+    return () => clearInterval(id);
+  }, [data?.is_live, data?.duration]);
+
   if (!data) return null;
+
+  const showBar = data.is_live && data.duration && data.duration > 0;
+  const elapsed = showBar
+    ? Math.min(
+        data.duration!,
+        Math.max(0, Math.floor(Date.now() / 1000) - data.started_at),
+      )
+    : 0;
+  const pct = showBar ? (elapsed / data.duration!) * 100 : 0;
 
   return (
     <div className="relative overflow-hidden rounded-2xl border border-border bg-card">
@@ -47,6 +71,18 @@ export default function NowPlaying() {
             {data.artist}
             {data.album ? ` — ${data.album}` : ""}
           </div>
+          {showBar ? (
+            <div className="mt-2 flex items-center gap-2 text-[10px] tabular-nums text-muted-foreground">
+              <span>{mmss(elapsed)}</span>
+              <div className="relative h-1 flex-1 overflow-hidden rounded-full bg-muted">
+                <div
+                  className="absolute inset-y-0 left-0 rounded-full bg-accent transition-[width] duration-1000 ease-linear"
+                  style={{ width: `${pct}%` }}
+                />
+              </div>
+              <span>{mmss(data.duration!)}</span>
+            </div>
+          ) : null}
         </div>
       </div>
     </div>

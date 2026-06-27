@@ -8,6 +8,8 @@ export interface NowPlayingDto {
   album: string | null;
   timestamp: number;
   cover_art_url: string | null;
+  duration: number | null;
+  started_at: number;
 }
 
 const POLL_MS = 5_000;

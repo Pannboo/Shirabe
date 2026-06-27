@@ -53,6 +53,34 @@ function linkButton(
   return b;
 }
 
+function mmss(secs: number): string {
+  const s = Math.max(0, Math.floor(secs));
+  return `${Math.floor(s / 60)}:${(s % 60).toString().padStart(2, "0")}`;
+}
+
+function progressBar(elapsed: number, total: number, width = 14): string {
+  const ratio = Math.max(0, Math.min(1, elapsed / total));
+  const filled = Math.round(ratio * width);
+  return "▰".repeat(filled) + "▱".repeat(width - filled);
+}
+
+function buildLiveLine(np: {
+  is_live: boolean;
+  timestamp: number;
+  started_at: number;
+  duration: number | null;
+}): string {
+  if (!np.is_live) {
+    return `⏸ Last played ${time(np.timestamp, TimestampStyles.RelativeTime)}`;
+  }
+  if (np.duration && np.duration > 0) {
+    const elapsed = Math.max(0, Math.floor(Date.now() / 1000) - np.started_at);
+    const clamped = Math.min(elapsed, np.duration);
+    return `▶ \`${mmss(clamped)}\` ${progressBar(clamped, np.duration)} \`${mmss(np.duration)}\``;
+  }
+  return `▶ Live · started ${time(np.timestamp, TimestampStyles.RelativeTime)}`;
+}
+
 const client = new Client({ intents: [GatewayIntentBits.Guilds] });
 
 client.once(Events.ClientReady, (c) => {
@@ -97,9 +125,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
     const spotifyUrl = `https://open.spotify.com/search/${searchQuery}`;
     const ytMusicUrl = `https://music.youtube.com/search?q=${searchQuery}`;
 
-    const liveLine = np.is_live
-      ? `▶ Live · started ${time(np.timestamp, TimestampStyles.RelativeTime)}`
-      : `⏸ Last played ${time(np.timestamp, TimestampStyles.RelativeTime)}`;
+    const liveLine = buildLiveLine(np);
 
     const section = new SectionBuilder().addTextDisplayComponents(
       new TextDisplayBuilder().setContent(

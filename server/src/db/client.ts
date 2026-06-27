@@ -48,6 +48,9 @@ ensureColumn("coverart", "local_path", "local_path TEXT");
 ensureColumn("coverart", "content_type", "content_type TEXT");
 ensureColumn("artist_images", "local_path", "local_path TEXT");
 ensureColumn("artist_images", "content_type", "content_type TEXT");
+// Captured from Navidrome's getNowPlaying when available — drives the
+// progress bar on the web NowPlaying card and the Discord /nowplaying card.
+ensureColumn("now_playing", "duration", "duration INTEGER");
 
 // One-shot data migrations. Tracked in the settings table so each only runs
 // once across reboots.

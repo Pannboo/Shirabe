@@ -136,6 +136,8 @@ publicStatsRouter.get("/now-playing", async (_req, res) => {
       // stopped being "now playing" and became a historical row. Image
       // cache is the single source of truth.
       cover_art_url: getOrEnqueueCoverArt(live.artist, live.album),
+      duration: live.duration,
+      started_at: live.started_at,
     });
     return;
   }
@@ -152,6 +154,8 @@ publicStatsRouter.get("/now-playing", async (_req, res) => {
     album: latest.album,
     timestamp: latest.timestamp,
     cover_art_url: getOrEnqueueCoverArt(latest.artist, latest.album),
+    duration: null,
+    started_at: latest.timestamp,
   });
 });
 

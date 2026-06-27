@@ -157,5 +157,6 @@ CREATE TABLE IF NOT EXISTS now_playing (
   timestamp INTEGER NOT NULL,
   started_at INTEGER NOT NULL,
   album_id TEXT,
-  enriched_at INTEGER
+  enriched_at INTEGER,
+  duration INTEGER
 );
